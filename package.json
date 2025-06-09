@@ -1,0 +1,116 @@
+{
+  "name": "cdk-nag-test",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:typescript",
+    "onLanguage:javascript",
+    "onLanguage:python"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cdk-nag-validator.validate",
+        "title": "Validate CDK Code with CDK-NAG"
+      },
+      {
+        "command": "cdk-nag-validator.configureRules",
+        "title": "Configure CDK-NAG Rules"
+      }
+    ],
+    "configuration": {
+      "title": "CDK NAG Validator",
+      "properties": {
+        "cdkNagValidator.enabledRulePacks": {
+          "type": "array",
+          "default": ["AwsSolutionsChecks"],
+          "description": "List of CDK-NAG rule packs to enable",
+          "items": {
+            "type": "string",
+            "enum": [
+              "AwsSolutionsChecks",
+              "HIPAA.SecurityChecks",
+              "NIST.800-53.R4Checks",
+              "NIST.800-53.R5Checks",
+              "PCI.DSS.321Checks",
+              "ServerlessChecks"
+            ]
+          }
+        },
+        "cdkNagValidator.customRules": {
+          "type": "array",
+          "default": [],
+          "description": "Custom CDK-NAG rules to check against",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique identifier for the rule"
+              },
+              "name": {
+                "type": "string",
+                "description": "Name of the rule"
+              },
+              "description": {
+                "type": "string",
+                "description": "Description of what the rule checks for"
+              },
+              "level": {
+                "type": "string",
+                "enum": ["ERROR", "WARNING", "INFO"],
+                "description": "Severity level of the rule"
+              },
+              "resourceTypes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "AWS resource types this rule applies to"
+              },
+              "condition": {
+                "type": "string",
+                "description": "JavaScript condition to check (e.g., '!resource.encryption')"
+              }
+            },
+            "required": ["id", "name", "description", "level", "resourceTypes", "condition"]
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.5",
+    "@types/node": "20.5.7",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "aws-cdk": "2.1018.0",
+    "ts-node": "^10.9.1",
+    "typescript": "~5.2.2",
+    "@types/vscode": "^1.85.0",
+    "cdk-nag": "2.36.12",
+    "@typescript-eslint/eslint-plugin": "^6.13.1",
+    "@typescript-eslint/parser": "^6.13.1",
+    "eslint": "^8.54.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.200.0",
+    "constructs": "^10.0.0",
+    "source-map-support": "^0.5.21",
+    "cdk-nag": "2.36.12"
+  }
+} 
