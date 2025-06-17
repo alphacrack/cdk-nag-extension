@@ -810,3 +810,35 @@ export function deactivate() {
     diagnosticCollection.dispose();
   }
 }
+
+async function validateCdkCode(document: vscode.TextDocument): Promise<void> {
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  const config = await ConfigManager.getConfig(workspaceRoot);
+  const cdkNagPackage = config.cdkNagPackage;
+
+  try {
+    // Check if the configured package is available in the project
+    const hasProjectCdkNag = await ConfigManager.checkProjectCdkNag(workspaceRoot, cdkNagPackage.name);
+    
+    // Use project's CDK-NAG if available and configured to do so
+    const packageToUse = hasProjectCdkNag && config.useProjectCdkNag 
+      ? cdkNagPackage.name 
+      : 'cdk-nag'; // Fall back to default if not found or not configured to use project's
+
+    // Run CDK-NAG validation
+    const { stdout } = await execAsync(`npx ${packageToUse} --format json`, {
+      cwd: workspaceRoot
+    });
+
+    // Process the validation results
+    const results = JSON.parse(stdout);
+    // ... rest of the validation logic ...
+  } catch (error) {
+    vscode.window.showErrorMessage(`Validation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}

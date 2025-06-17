@@ -2,7 +2,13 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 
+interface CdkNagPackage {
+  name: string;
+  isCustom: boolean;
+}
+
 interface CdkNagConfig {
+  cdkNagPackage: CdkNagPackage;
   useProjectCdkNag: boolean;
   defaultRules: {
     [key: string]: boolean;
@@ -33,6 +39,10 @@ export class ConfigManager {
     }
 
     return {
+      cdkNagPackage: {
+        name: 'cdk-nag',
+        isCustom: false
+      },
       useProjectCdkNag: true,
       defaultRules: { ...this.DEFAULT_RULES },
       customRules: [],
@@ -55,13 +65,13 @@ export class ConfigManager {
     }
   }
 
-  public static async checkProjectCdkNag(workspaceRoot: string): Promise<boolean> {
+  public static async checkProjectCdkNag(workspaceRoot: string, packageName: string): Promise<boolean> {
     const packageJsonPath = path.join(workspaceRoot, 'package.json');
     try {
       if (fs.existsSync(packageJsonPath)) {
         const packageJson = JSON.parse(await fs.promises.readFile(packageJsonPath, 'utf8'));
-        return packageJson.dependencies?.['cdk-nag'] !== undefined || 
-               packageJson.devDependencies?.['cdk-nag'] !== undefined;
+        return packageJson.dependencies?.[packageName] !== undefined || 
+               packageJson.devDependencies?.[packageName] !== undefined;
       }
     } catch (error) {
       console.error('Error checking project CDK-NAG:', error);
@@ -76,8 +86,40 @@ export class ConfigManager {
       return;
     }
 
-    const hasProjectCdkNag = await this.checkProjectCdkNag(workspaceRoot);
     const config = await this.getConfig(workspaceRoot);
+
+    // First, let user choose the CDK-NAG package
+    const packageOptions = [
+      { label: 'Default CDK-NAG', description: 'Use standard cdk-nag package' },
+      { label: 'Custom Package', description: 'Use a custom CDK-NAG implementation' }
+    ];
+
+    const selectedPackage = await vscode.window.showQuickPick(packageOptions, {
+      placeHolder: 'Select CDK-NAG package to use'
+    });
+
+    if (!selectedPackage) {
+      return;
+    }
+
+    let packageName = 'cdk-nag';
+    let isCustom = false;
+
+    if (selectedPackage.label === 'Custom Package') {
+      const customPackageName = await vscode.window.showInputBox({
+        prompt: 'Enter your custom CDK-NAG package name (e.g., bishwas-nag)',
+        placeHolder: 'bishwas-nag'
+      });
+
+      if (!customPackageName) {
+        return;
+      }
+
+      packageName = customPackageName;
+      isCustom = true;
+    }
+
+    const hasProjectCdkNag = await this.checkProjectCdkNag(workspaceRoot, packageName);
 
     // Show quick pick for rule selection
     const ruleItems = Object.entries(config.defaultRules).map(([rule, enabled]) => ({
@@ -94,6 +136,10 @@ export class ConfigManager {
     if (selectedRules) {
       // Update config with selected rules
       const newConfig: CdkNagConfig = {
+        cdkNagPackage: {
+          name: packageName,
+          isCustom: isCustom
+        },
         useProjectCdkNag: hasProjectCdkNag,
         defaultRules: {},
         customRules: config.customRules,
@@ -111,7 +157,12 @@ export class ConfigManager {
       });
 
       await this.saveConfig(workspaceRoot, newConfig);
-      vscode.window.showInformationMessage('CDK-NAG rules configured successfully');
+      vscode.window.showInformationMessage(`CDK-NAG rules configured successfully using ${packageName}`);
     }
+  }
+
+  public static async getCdkNagPackage(workspaceRoot: string): Promise<CdkNagPackage> {
+    const config = await this.getConfig(workspaceRoot);
+    return config.cdkNagPackage;
   }
 } 

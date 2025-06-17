@@ -1,4 +1,8 @@
 {
+  "cdkNagPackage": {
+    "name": "cdk-nag",
+    "isCustom": false
+  },
   "useProjectCdkNag": true,
   "defaultRules": {
     "AwsSolutions": true,
