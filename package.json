@@ -3,12 +3,12 @@
   "displayName": "CDK NAG Validator",
   "description": "VS Code extension for CDK-NAG validation with inline suggestions",
   "version": "0.0.1",
-  "publisher": "bishwasjha",
+  "publisher": "alphacrack",
   "private": false,
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bishwasjha/cdk-nag-validator.git"
+    "url": "https://github.com/alphacrack/cdk-nag-extension"
   },
   "engines": {
     "vscode": "^1.96.2"

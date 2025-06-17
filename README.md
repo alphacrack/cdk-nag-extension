@@ -1,9 +1,9 @@
 # CDK NAG Validator VS Code Extension
 
-[![Version](https://img.shields.io/visual-studio-marketplace/v/bishwasjha.cdk-nag-validator.svg)](https://marketplace.visualstudio.com/items?itemName=bishwasjha.cdk-nag-validator)
-[![Downloads](https://img.shields.io/visual-studio-marketplace/d/bishwasjha.cdk-nag-validator.svg)](https://marketplace.visualstudio.com/items?itemName=bishwasjha.cdk-nag-validator)
-[![Build Status](https://github.com/bishwasjha/cdk-nag-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/bishwasjha/cdk-nag-validator/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/bishwasjha/cdk-nag-validator.svg)](https://github.com/bishwasjha/cdk-nag-validator/blob/main/LICENSE)
+[![Version](https://img.shields.io/visual-studio-marketplace/v/alphacrack.cdk-nag-validator.svg)](https://marketplace.visualstudio.com/items?itemName=alphacrack.cdk-nag-validator)
+[![Downloads](https://img.shields.io/visual-studio-marketplace/d/alphacrack.cdk-nag-validator.svg)](https://marketplace.visualstudio.com/items?itemName=alphacrack.cdk-nag-validator)
+[![Build Status](https://github.com/alphacrack/cdk-nag-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/alphacrack/cdk-nag-validator/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/alphacrack/cdk-nag-validator.svg)](https://github.com/alphacrack/cdk-nag-validator/blob/main/LICENSE)
 
 A powerful VS Code extension that brings AWS CDK-NAG (CDK Nag) validation directly into your editor. This extension helps you write secure and compliant AWS CDK code by providing real-time validation, inline suggestions, and detailed explanations of security and compliance issues.
 
@@ -23,7 +23,7 @@ A powerful VS Code extension that brings AWS CDK-NAG (CDK Nag) validation direct
 2. Press `Ctrl+P` (Windows/Linux) or `Cmd+P` (Mac)
 3. Paste the following command:
    ```
-   ext install bishwasjha.cdk-nag-validator
+   ext install alphacrack.cdk-nag-validator
    ```
 4. Press Enter
 
@@ -81,7 +81,7 @@ Available rule packs:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/bishwasjha/cdk-nag-validator.git
+   git clone https://github.com/alphacrack/cdk-nag-validator.git
    cd cdk-nag-validator
    ```
 
@@ -128,8 +128,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📫 Support
 
-- [GitHub Issues](https://github.com/bishwasjha/cdk-nag-validator/issues)
-- [Documentation](https://github.com/bishwasjha/cdk-nag-validator/wiki)
+- [GitHub Issues](https://github.com/alphacrack/cdk-nag-validator/issues)
+- [Documentation](https://github.com/alphacrack/cdk-nag-validator/wiki)
 
 ## 🔄 Changelog
 
