@@ -1,0 +1,11 @@
+{
+  "useProjectCdkNag": true,
+  "defaultRules": {
+    "AwsSolutions": true,
+    "HIPAA.Security": false,
+    "NIST.800-53.R4": false,
+    "PCI DSS 321": false
+  },
+  "customRules": [],
+  "suppressions": []
+} 

@@ -3,6 +3,13 @@
   "displayName": "CDK NAG Validator",
   "description": "VS Code extension for CDK-NAG validation with inline suggestions",
   "version": "0.0.1",
+  "publisher": "bishwasjha",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bishwasjha/cdk-nag-validator.git"
+  },
   "engines": {
     "vscode": "^1.96.2"
   },
@@ -22,6 +29,10 @@
         "title": "CDK NAG: Validate Current File"
       },
       {
+        "command": "cdk-nag-validator.validateWorkspace",
+        "title": "CDK NAG: Validate Workspace"
+      },
+      {
         "command": "cdk-nag-validator.configureRules",
         "title": "CDK NAG: Configure Rules"
       }
@@ -31,7 +42,9 @@
       "properties": {
         "cdkNagValidator.enabledRulePacks": {
           "type": "array",
-          "default": ["AwsSolutionsChecks"],
+          "default": [
+            "AwsSolutionsChecks"
+          ],
           "description": "List of enabled CDK-NAG rule packs",
           "items": {
             "type": "string",
@@ -66,7 +79,11 @@
               },
               "level": {
                 "type": "string",
-                "enum": ["ERROR", "WARNING", "INFO"],
+                "enum": [
+                  "ERROR",
+                  "WARNING",
+                  "INFO"
+                ],
                 "description": "Severity level of the rule"
               },
               "resourceTypes": {
@@ -92,6 +109,21 @@
           "type": "boolean",
           "default": true,
           "description": "Show inline suggestions for fixing issues"
+        },
+        "cdk-nag-validator.useProjectCdkNag": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use project's CDK-NAG installation if available"
+        },
+        "cdk-nag-validator.defaultRules": {
+          "type": "object",
+          "default": {
+            "AwsSolutions": true,
+            "HIPAA.Security": false,
+            "NIST.800-53.R4": false,
+            "PCI DSS 321": false
+          },
+          "description": "Default CDK-NAG rules to apply"
         }
       }
     }
@@ -100,21 +132,50 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "test-watch": "tsc -watch -p ./ && npm run test",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "lint:fix": "eslint src --ext ts --fix",
+    "test": "ts-node src/test/runTest.ts",
+    "clean": "rimraf out",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "prepare": "husky install"
   },
   "devDependencies": {
-    "@types/vscode": "^1.60.0",
+    "@types/jest": "^29.5.12",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^16.11.7",
+    "@types/vscode": "^1.60.0",
     "@typescript-eslint/eslint-plugin": "^5.30.0",
     "@typescript-eslint/parser": "^5.30.0",
+    "@vscode/test-electron": "^2.5.2",
     "eslint": "^8.13.0",
-    "typescript": "^4.7.2"
+    "eslint-config-prettier": "^8.10.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "husky": "^8.0.3",
+    "jest": "^29.7.0",
+    "lint-staged": "^15.2.0",
+    "mocha": "^11.6.0",
+    "prettier": "^2.8.8",
+    "rimraf": "^5.0.5",
+    "ts-jest": "^29.1.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^4.7.2",
+    "vsce": "^2.15.0"
   },
   "dependencies": {
     "aws-cdk-lib": "^2.156.0",
     "cdk-nag": "^2.27.0",
     "yaml": "^2.3.4"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
   }
-} 
+}
