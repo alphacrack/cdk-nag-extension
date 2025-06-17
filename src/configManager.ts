@@ -107,8 +107,8 @@ export class ConfigManager {
 
     if (selectedPackage.label === 'Custom Package') {
       const customPackageName = await vscode.window.showInputBox({
-        prompt: 'Enter your custom CDK-NAG package name (e.g., bishwas-nag)',
-        placeHolder: 'bishwas-nag'
+        prompt: 'Enter your custom CDK-NAG package name (e.g., custom-nag)',
+        placeHolder: 'custom-nag'
       });
 
       if (!customPackageName) {

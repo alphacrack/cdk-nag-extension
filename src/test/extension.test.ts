@@ -4,11 +4,11 @@ import * as fs from 'fs';
 
 describe('CDK NAG Validator Extension', () => {
   it('should be present', () => {
-    expect(vscode.extensions.getExtension('bishwasjha.cdk-nag-validator')).toBeDefined();
+    expect(vscode.extensions.getExtension('alphacrack.cdk-nag-validator')).toBeDefined();
   });
 
   it('should activate', async () => {
-    const ext = vscode.extensions.getExtension('bishwasjha.cdk-nag-validator');
+    const ext = vscode.extensions.getExtension('alphacrack.cdk-nag-validator');
     await ext?.activate();
     expect(ext?.isActive).toBe(true);
   });
