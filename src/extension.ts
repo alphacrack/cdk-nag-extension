@@ -6,7 +6,7 @@ import * as fs from 'fs';
 
 const execAsync = promisify(exec);
 
-// Global diagnostic collection
+// Create a diagnostic collection
 let diagnosticCollection: vscode.DiagnosticCollection;
 
 // Define available rule packs
@@ -19,6 +19,16 @@ const AVAILABLE_RULE_PACKS = [
     'ServerlessChecks'
 ];
 
+// Define common fixes for known issues
+const COMMON_FIXES: { [key: string]: string } = {
+    'S3_BUCKET_ENCRYPTION': 'Add encryption configuration: new s3.Bucket(this, "Bucket", { encryption: s3.BucketEncryption.S3_MANAGED })',
+    'S3_BUCKET_VERSIONING': 'Enable versioning: new s3.Bucket(this, "Bucket", { versioned: true })',
+    'S3_BUCKET_LOGGING': 'Enable access logging: new s3.Bucket(this, "Bucket", { serverAccessLogsBucket: loggingBucket })',
+    'DYNAMODB_TABLE_ENCRYPTION': 'Enable encryption: new dynamodb.Table(this, "Table", { encryption: dynamodb.TableEncryption.AWS_MANAGED })',
+    'LAMBDA_FUNCTION_LOGGING': 'Enable logging: new lambda.Function(this, "Function", { logRetention: logs.RetentionDays.ONE_WEEK })',
+    'API_GATEWAY_LOGGING': 'Enable logging: new apigateway.RestApi(this, "Api", { deployOptions: { loggingLevel: apigateway.MethodLoggingLevel.INFO } })'
+};
+
 // Get configured rule packs from settings
 function getConfiguredRulePacks(): string[] {
     const config = vscode.workspace.getConfiguration('cdkNagValidator');
@@ -30,6 +40,18 @@ function getConfiguredRulePacks(): string[] {
 function getCustomRules(): any[] {
     const config = vscode.workspace.getConfiguration('cdkNagValidator');
     return config.get<any[]>('customRules', []);
+}
+
+// Get inline suggestions setting
+function shouldShowInlineSuggestions(): boolean {
+    const config = vscode.workspace.getConfiguration('cdkNagValidator');
+    return config.get<boolean>('showInlineSuggestions', true);
+}
+
+// Get auto-validate setting
+function shouldAutoValidate(): boolean {
+    const config = vscode.workspace.getConfiguration('cdkNagValidator');
+    return config.get<boolean>('autoValidate', true);
 }
 
 // Run CDK-NAG with configured rule packs and custom rules
@@ -372,54 +394,230 @@ async function checkNodeVersion(): Promise<boolean> {
     }
 }
 
-export async function activate(context: vscode.ExtensionContext) {
-    try {
-        console.log('CDK NAG Validator is activating...');
+// Map CDK-NAG findings to source code locations with inline suggestions
+async function mapFindingsToSourceLocations(findings: any[], document: vscode.TextDocument): Promise<vscode.Diagnostic[]> {
+    const diagnostics: vscode.Diagnostic[] = [];
+    const text = document.getText();
 
-        // Check Node.js version first
-        // const isNodeVersionCompatible = await checkNodeVersion();
-        // if (!isNodeVersionCompatible) {
-        //     throw new Error('Incompatible Node.js version detected');
-        // }
+    console.log('Mapping findings to source locations for file:', document.fileName);
+    console.log('Document text:', text);
 
-        // Create diagnostic collection
-        diagnosticCollection = vscode.languages.createDiagnosticCollection('cdk-nag');
-        context.subscriptions.push(diagnosticCollection);
-
-        // Register the validate command
-        let disposable = vscode.commands.registerCommand('cdk-nag-validator.validate', () => {
-            console.log('Validate command triggered');
-            validateCurrentFile();
-        });
-
-        // Register the configure rules command
-        let configureDisposable = vscode.commands.registerCommand('cdk-nag-validator.configureRules', () => {
-            console.log('Configure rules command triggered');
-            configureRules();
-        });
-
-        // Register the on-save handler
-        let saveDisposable = vscode.workspace.onDidSaveTextDocument(async (document) => {
-            console.log('File saved:', document.fileName);
-            if (shouldValidateFile(document)) {
-                console.log('File should be validated');
-                try {
-                    await validateFile(document);
-                } catch (error) {
-                    console.error('Error validating file:', error);
-                    vscode.window.showErrorMessage(`CDK-NAG validation failed: ${error instanceof Error ? error.message : String(error)}`);
-                }
-            } else {
-                console.log('File should not be validated');
+    // Map each finding to its source location
+    for (const finding of findings) {
+        console.log('Processing finding:', finding);
+        
+        // Extract resource type from the finding ID
+        const resourceType = finding.id.split('_')[0];
+        console.log(`Looking for resource type: ${resourceType}`);
+        
+        // Find all resource definitions of this type in the source code
+        // Match both direct usage (new S3) and imported usage (new s3.Bucket)
+        const resourceRegex = new RegExp(`new\\s+(?:${resourceType}|\\w+\\.${resourceType})\\s*\\([^)]*\\)`, 'gi');
+        let match;
+        let foundMatch = false;
+        
+        while ((match = resourceRegex.exec(text)) !== null) {
+            console.log(`Found ${resourceType} resource at position ${match.index}:`, match[0]);
+            
+            // Get the range for this resource
+            const startPos = document.positionAt(match.index);
+            const endPos = document.positionAt(match.index + match[0].length);
+            const range = new vscode.Range(startPos, endPos);
+            
+            console.log('Created range:', range);
+            
+            // Create a diagnostic for the finding
+            const diagnostic = new vscode.Diagnostic(
+                range,
+                `${finding.name}: ${finding.description}`,
+                finding.level === 'ERROR' ? vscode.DiagnosticSeverity.Error :
+                finding.level === 'WARNING' ? vscode.DiagnosticSeverity.Warning :
+                vscode.DiagnosticSeverity.Information
+            );
+            
+            // Add additional information
+            diagnostic.source = 'CDK-NAG';
+            diagnostic.code = finding.id;
+            
+            // Add related information if available
+            if (finding.explanation) {
+                diagnostic.relatedInformation = [{
+                    location: new vscode.Location(document.uri, range),
+                    message: finding.explanation
+                }];
             }
-        });
 
-        context.subscriptions.push(disposable, configureDisposable, saveDisposable);
-        console.log('CDK NAG Validator activation completed successfully');
-    } catch (error) {
-        console.error('Error during activation:', error);
-        vscode.window.showErrorMessage(`Failed to activate CDK NAG Validator: ${error instanceof Error ? error.message : String(error)}`);
+            // Add inline suggestion if available and enabled
+            if (shouldShowInlineSuggestions() && COMMON_FIXES[finding.id]) {
+                const suggestion = new vscode.CodeAction(
+                    `Fix: ${finding.name}`,
+                    vscode.CodeActionKind.QuickFix
+                );
+                suggestion.edit = new vscode.WorkspaceEdit();
+                suggestion.edit.insert(document.uri, range.end, `\n    ${COMMON_FIXES[finding.id]}`);
+                suggestion.diagnostics = [diagnostic];
+                suggestion.isPreferred = true;
+                diagnostic.relatedInformation?.push({
+                    location: new vscode.Location(document.uri, range),
+                    message: `Quick fix available: ${COMMON_FIXES[finding.id]}`
+                });
+            }
+            
+            diagnostics.push(diagnostic);
+            console.log('Added diagnostic:', diagnostic);
+            foundMatch = true;
+        }
+        
+        if (!foundMatch) {
+            console.log(`No ${resourceType} resources found in the code`);
+            
+            // Try a more lenient search as fallback
+            const fallbackRegex = new RegExp(`new\\s+[\\w.]*${resourceType}[\\w.]*\\s*\\(`, 'gi');
+            let fallbackMatch;
+            while ((fallbackMatch = fallbackRegex.exec(text)) !== null) {
+                console.log(`Found ${resourceType} resource with fallback search at position ${fallbackMatch.index}:`, fallbackMatch[0]);
+                
+                const startPos = document.positionAt(fallbackMatch.index);
+                const endPos = document.positionAt(fallbackMatch.index + fallbackMatch[0].length);
+                const range = new vscode.Range(startPos, endPos);
+                
+                const diagnostic = new vscode.Diagnostic(
+                    range,
+                    `${finding.name}: ${finding.description}`,
+                    finding.level === 'ERROR' ? vscode.DiagnosticSeverity.Error :
+                    finding.level === 'WARNING' ? vscode.DiagnosticSeverity.Warning :
+                    vscode.DiagnosticSeverity.Information
+                );
+                
+                diagnostic.source = 'CDK-NAG';
+                diagnostic.code = finding.id;
+                
+                diagnostics.push(diagnostic);
+                console.log('Added diagnostic from fallback search:', diagnostic);
+                foundMatch = true;
+            }
+        }
     }
+
+    console.log('Final diagnostics:', diagnostics);
+    return diagnostics;
+}
+
+// Validate a file
+async function validateFile(document: vscode.TextDocument) {
+    try {
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+        if (!workspaceFolder) {
+            throw new Error('No workspace folder found');
+        }
+
+        console.log('Running CDK-NAG validation for file:', document.fileName);
+        const output = await runCdkNag(workspaceFolder.uri.fsPath);
+        
+        try {
+            const findings = JSON.parse(output);
+            console.log('CDK-NAG findings:', findings);
+            
+            if (findings.length > 0) {
+                // Map findings to source locations
+                const diagnostics = await mapFindingsToSourceLocations(findings, document);
+                console.log('Created diagnostics:', diagnostics);
+                
+                // Clear existing diagnostics
+                diagnosticCollection.delete(document.uri);
+                
+                // Update the diagnostic collection
+                diagnosticCollection.set(document.uri, diagnostics);
+                console.log('Set diagnostics for document:', document.uri.toString());
+                
+                // Show a summary message
+                const errorCount = findings.filter(f => f.level === 'ERROR').length;
+                const warningCount = findings.filter(f => f.level === 'WARNING').length;
+                const infoCount = findings.filter(f => f.level === 'INFO').length;
+                
+                let message = `Found ${findings.length} CDK-NAG issues:`;
+                if (errorCount > 0) message += ` ${errorCount} errors`;
+                if (warningCount > 0) message += ` ${warningCount} warnings`;
+                if (infoCount > 0) message += ` ${infoCount} info`;
+                
+                vscode.window.showWarningMessage(message);
+
+                // Force update of diagnostics
+                await vscode.commands.executeCommand('workbench.action.problems.focus');
+                
+                // Force refresh of the editor
+                await vscode.commands.executeCommand('workbench.action.files.revert');
+            } else {
+                diagnosticCollection.delete(document.uri);
+                vscode.window.showInformationMessage('No CDK-NAG issues found');
+            }
+        } catch (error) {
+            console.error('Error parsing CDK-NAG output:', error);
+            throw new Error(`Failed to parse CDK-NAG output: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    } catch (error) {
+        console.error('Error validating file:', error);
+        throw error;
+    }
+}
+
+// This method is called when your extension is activated
+export function activate(context: vscode.ExtensionContext) {
+    console.log('CDK-NAG Validator extension is now active');
+
+    // Initialize diagnostic collection
+    diagnosticCollection = vscode.languages.createDiagnosticCollection('cdk-nag');
+    context.subscriptions.push(diagnosticCollection);
+
+    // Register the validate command
+    let validateCommand = vscode.commands.registerCommand('cdk-nag-validator.validate', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('No active editor found');
+            return;
+        }
+
+        try {
+            await validateFile(editor.document);
+        } catch (error) {
+            console.error('Error during validation:', error);
+            vscode.window.showErrorMessage(`Validation failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    });
+
+    // Register the validate workspace command
+    let validateWorkspaceCommand = vscode.commands.registerCommand('cdk-nag-validator.validateWorkspace', async () => {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            vscode.window.showErrorMessage('No workspace folder found');
+            return;
+        }
+
+        try {
+            await validateWorkspace(workspaceFolder);
+        } catch (error) {
+            console.error('Error during workspace validation:', error);
+            vscode.window.showErrorMessage(`Workspace validation failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    });
+
+    // Add commands to the extension context
+    context.subscriptions.push(validateCommand);
+    context.subscriptions.push(validateWorkspaceCommand);
+
+    // Register a document change listener to clear diagnostics when the document changes
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeTextDocument(event => {
+            diagnosticCollection.delete(event.document.uri);
+        })
+    );
+
+    // Register a document close listener to clear diagnostics when the document is closed
+    context.subscriptions.push(
+        vscode.workspace.onDidCloseTextDocument(document => {
+            diagnosticCollection.delete(document.uri);
+        })
+    );
 }
 
 function shouldValidateFile(document: vscode.TextDocument): boolean {
@@ -501,95 +699,10 @@ async function validateCurrentFile() {
     }
 }
 
-// Map CDK-NAG findings to source code locations
-async function mapFindingsToSourceLocations(findings: any[], document: vscode.TextDocument): Promise<vscode.Diagnostic[]> {
-    const diagnostics: vscode.Diagnostic[] = [];
-    const text = document.getText();
-
-    // Create a map of resource IDs to their locations in the source code
-    const resourceLocations = new Map<string, vscode.Range>();
-    
-    // Find all resource definitions in the source code
-    const resourceRegex = /new\s+(\w+)\s*\(\s*this\s*,\s*['"]([^'"]+)['"]/g;
-    let match;
-    while ((match = resourceRegex.exec(text)) !== null) {
-        const resourceId = match[2];
-        const startPos = document.positionAt(match.index);
-        const endPos = document.positionAt(match.index + match[0].length);
-        resourceLocations.set(resourceId, new vscode.Range(startPos, endPos));
-    }
-
-    // Map each finding to its source location
-    for (const finding of findings) {
-        const resourceId = finding.resourceId;
-        const location = resourceLocations.get(resourceId);
-        
-        if (location) {
-            // Create a diagnostic for the finding
-            const diagnostic = new vscode.Diagnostic(
-                location,
-                `${finding.name}: ${finding.description}`,
-                finding.level === 'ERROR' ? vscode.DiagnosticSeverity.Error :
-                finding.level === 'WARNING' ? vscode.DiagnosticSeverity.Warning :
-                vscode.DiagnosticSeverity.Information
-            );
-            
-            // Add additional information
-            diagnostic.source = 'CDK-NAG';
-            diagnostic.code = finding.id;
-            
-            // Add related information if available
-            if (finding.explanation) {
-                diagnostic.relatedInformation = [{
-                    location: new vscode.Location(document.uri, location),
-                    message: finding.explanation
-                }];
-            }
-            
-            diagnostics.push(diagnostic);
-        } else {
-            // If we can't find the exact location, try to find the resource type
-            const resourceTypeRegex = new RegExp(`new\\s+${finding.resourceType}\\s*\\(`, 'g');
-            let typeMatch;
-            while ((typeMatch = resourceTypeRegex.exec(text)) !== null) {
-                const startPos = document.positionAt(typeMatch.index);
-                const endPos = document.positionAt(typeMatch.index + typeMatch[0].length);
-                
-                const diagnostic = new vscode.Diagnostic(
-                    new vscode.Range(startPos, endPos),
-                    `${finding.name}: ${finding.description}`,
-                    finding.level === 'ERROR' ? vscode.DiagnosticSeverity.Error :
-                    finding.level === 'WARNING' ? vscode.DiagnosticSeverity.Warning :
-                    vscode.DiagnosticSeverity.Information
-                );
-                
-                diagnostic.source = 'CDK-NAG';
-                diagnostic.code = finding.id;
-                
-                if (finding.explanation) {
-                    diagnostic.relatedInformation = [{
-                        location: new vscode.Location(document.uri, new vscode.Range(startPos, endPos)),
-                        message: finding.explanation
-                    }];
-                }
-                
-                diagnostics.push(diagnostic);
-            }
-        }
-    }
-
-    return diagnostics;
-}
-
-// Validate a file
-async function validateFile(document: vscode.TextDocument) {
+// Validate the entire workspace
+async function validateWorkspace(workspaceFolder: vscode.WorkspaceFolder) {
     try {
-        const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-        if (!workspaceFolder) {
-            throw new Error('No workspace folder found');
-        }
-
-        console.log('Running CDK-NAG validation for file:', document.fileName);
+        console.log('Running CDK-NAG validation for workspace:', workspaceFolder.uri.fsPath);
         const output = await runCdkNag(workspaceFolder.uri.fsPath);
         
         try {
@@ -597,11 +710,15 @@ async function validateFile(document: vscode.TextDocument) {
             console.log('CDK-NAG findings:', findings);
             
             if (findings.length > 0) {
-                // Map findings to source locations
-                const diagnostics = await mapFindingsToSourceLocations(findings, document);
-                
-                // Update the diagnostic collection
-                diagnosticCollection.set(document.uri, diagnostics);
+                // Process each finding for all TypeScript files in the workspace
+                const files = await vscode.workspace.findFiles('**/*.ts');
+                for (const file of files) {
+                    const document = await vscode.workspace.openTextDocument(file);
+                    const diagnostics = await mapFindingsToSourceLocations(findings, document);
+                    if (diagnostics.length > 0) {
+                        diagnosticCollection.set(document.uri, diagnostics);
+                    }
+                }
                 
                 // Show a summary message
                 const errorCount = findings.filter(f => f.level === 'ERROR').length;
@@ -615,7 +732,6 @@ async function validateFile(document: vscode.TextDocument) {
                 
                 vscode.window.showWarningMessage(message);
             } else {
-                diagnosticCollection.delete(document.uri);
                 vscode.window.showInformationMessage('No CDK-NAG issues found');
             }
         } catch (error) {
@@ -623,7 +739,7 @@ async function validateFile(document: vscode.TextDocument) {
             throw new Error(`Failed to parse CDK-NAG output: ${error instanceof Error ? error.message : String(error)}`);
         }
     } catch (error) {
-        console.error('Error validating file:', error);
+        console.error('Error validating workspace:', error);
         throw error;
     }
 }
