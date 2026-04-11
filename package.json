@@ -105,6 +105,11 @@
           "default": true,
           "description": "Automatically validate files on save"
         },
+        "cdkNagValidator.autoInstall": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically run npm install in the workspace before each validation. Disabled by default — enable only if you want the extension to manage dependencies automatically."
+        },
         "cdkNagValidator.showInlineSuggestions": {
           "type": "boolean",
           "default": true,
@@ -133,10 +138,11 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test-watch": "tsc -watch -p ./ && npm run test",
-    "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "lint:fix": "eslint src --ext ts --fix",
-    "test": "ts-node src/test/runTest.ts",
+    "test": "node --test src/test/runner-unit.mjs",
+    "test:jest": "jest",
+    "test:integration": "ts-node src/test/runTest.ts",
     "clean": "rimraf out",
     "package": "vsce package",
     "publish": "vsce publish",
