@@ -1,0 +1,69 @@
+# Gitleaks config — runs in CI and optionally as a pre-commit hook.
+#
+# This extends gitleaks' built-in rules (API tokens, cloud credentials,
+# private keys, etc.) with PII patterns tailored to what could plausibly end
+# up in a public CDK repo — email addresses in tests, leaked customer phone
+# numbers in bug reports, SSNs or credit card numbers in example data.
+#
+# Built-in rules fire by default; the `[extend]` block below keeps them on.
+# Custom PII rules are additive. Allowlists are narrow on purpose — we do
+# NOT want to allowlist `example.com` globally because an attacker can hide
+# a real exfil address behind a fake one; instead, docs files that need
+# example addresses use a `# gitleaks:allow` inline comment.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "pii-ssn"
+description = "US Social Security Number"
+# Gitleaks uses RE2 — no lookaheads available. We match the basic
+# XXX-XX-XXXX format with word boundaries. False positives (e.g. reserved
+# test prefixes 000/666/9XX) are acceptable; a human triages them and
+# either redacts or allowlists via `# gitleaks:allow`.
+regex = '''\b\d{3}-\d{2}-\d{4}\b'''
+tags = ["pii", "ssn"]
+
+[[rules]]
+id = "pii-credit-card"
+description = "Credit card number (PAN) — Visa/MC/Amex/Discover"
+regex = '''\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2}|6(?:011|5\d{2}))[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b'''
+tags = ["pii", "payment"]
+
+[[rules]]
+id = "pii-phone-us"
+description = "US phone number (NPA-NXX-XXXX)"
+# Requires a separator between area code, exchange, and subscriber
+# number so we don't match random 10-digit sequences.
+regex = '''\b[2-9]\d{2}[-. ]\d{3}[-. ]\d{4}\b'''
+tags = ["pii", "phone"]
+
+[[rules]]
+id = "pii-iban"
+description = "IBAN (international bank account number)"
+regex = '''\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b'''
+tags = ["pii", "banking"]
+
+[[rules]]
+id = "generic-aws-credentials-in-config"
+description = "AWS credential-style value in settings/config JSON"
+# Catches `aws_access_key_id=AKIA...` or `"secretAccessKey": "..."` in JSON.
+regex = '''(?i)(aws[_-]?(access[_-]?key[_-]?id|secret[_-]?access[_-]?key))\s*[:=]\s*["']?[A-Za-z0-9/+=]{16,}["']?'''
+tags = ["aws", "credentials"]
+
+# ── Allowlist ────────────────────────────────────────────────────────────
+# Narrow and deliberate. Use `# gitleaks:allow` inline for one-off
+# documentation-only appearances; the paths below are for files whose
+# purpose is to demonstrate the scan itself.
+[allowlist]
+description = "Narrow allowlist for test fixtures and documentation"
+paths = [
+  '''\.gitleaks\.toml$''',      # this file contains example regexes
+  '''SECURITY\.md$''',          # disclosure policy references example emails
+]
+# regexTarget = "line" means the regex matches against the full line being
+# scanned, so `# gitleaks:allow` as a trailing comment will suppress a hit.
+regexTarget = "line"
+regexes = [
+  '''# ?gitleaks:allow''',
+]
