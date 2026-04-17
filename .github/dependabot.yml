@@ -1,0 +1,53 @@
+# Dependabot keeps dependencies current and opens PRs for security advisories.
+# Grouping rules minimize churn — one PR per ecosystem per week for normal
+# bumps, with security fixes opening immediately and un-grouped.
+
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: UTC
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    commit-message:
+      prefix: 'deps'
+      prefix-development: 'deps-dev'
+      include: scope
+    # Group non-security dev-tool bumps so the main repo doesn't drown in
+    # dependabot noise. Security advisories are always opened individually.
+    groups:
+      eslint:
+        patterns:
+          - 'eslint'
+          - '@typescript-eslint/*'
+          - 'eslint-*'
+      types:
+        patterns:
+          - '@types/*'
+      jest:
+        patterns:
+          - 'jest'
+          - 'ts-jest'
+          - '@types/jest'
+      mocha:
+        patterns:
+          - 'mocha'
+          - '@types/mocha'
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: UTC
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: 'ci'
