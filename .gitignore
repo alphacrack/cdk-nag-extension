@@ -26,8 +26,35 @@ yarn-error.log*
 
 # Environment variables
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+
+# Credentials and secrets — defense in depth on top of gitleaks + GitHub
+# native secret scanning. If you find yourself wanting to commit any of
+# these, stop and rotate instead.
+*.pem
+*.key
+*.keystore
+*.p12
+*.pfx
+*.cer
+*.crt
+*_rsa
+*_dsa
+*_ecdsa
+*_ed25519
+id_rsa*
+id_ed25519*
+credentials
+credentials.json
+client_secret*.json
+service-account*.json
+.aws/
+.ssh/
+
+# Common leak files
+secrets/
+private/
 
 # OS
 .DS_Store
