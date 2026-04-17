@@ -13,6 +13,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as vm from 'vm';
 import * as path from 'path';
 import * as yaml from 'yaml';
@@ -77,29 +78,133 @@ async function main(): Promise<void> {
   const findings: Finding[] = [];
 
   // ── Built-in rule packs ───────────────────────────────────────────────────
-  // We require cdk-nag from the workspace so the project's own version is
-  // used.  The require is done at runtime so that the import path is never
-  // embedded in a shell string.
+  // We require cdk-nag and aws-cdk-lib from the workspace so the project's own
+  // versions are used.  Requires are done at runtime so that the import paths
+  // are never embedded in a shell string.
   if (rulePacks.length > 0) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const cdkNag = require(
       require.resolve('cdk-nag', { paths: [workspacePath] })
     );
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const awsCdkLib = require(
+      require.resolve('aws-cdk-lib', { paths: [workspacePath] })
+    );
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const cfnInclude = require(
+      require.resolve('aws-cdk-lib/cloudformation-include', { paths: [workspacePath] })
+    );
+
+    const { App, Stack, Aspects } = awsCdkLib;
+    const { CfnInclude } = cfnInclude;
+
+    // Map cdk-nag's NagMessageLevel enum values ("Warning"/"Error") to the
+    // stdout contract strings this runner emits ("WARNING"/"ERROR").
+    const levelToString = (lvl: unknown): string => {
+      const s = String(lvl).toUpperCase();
+      if (s === 'WARN' || s === 'WARNING') return 'WARNING';
+      if (s === 'ERROR') return 'ERROR';
+      return s;
+    };
 
     for (const pack of rulePacks) {
+      // Each pack gets its own App + Stack so findings are isolated and one
+      // pack's synthesis failure does not affect the next.
+      let tmpOutdir: string | null = null;
       try {
         const PackClass = cdkNag[pack];
         if (!PackClass) {
           process.stderr.write(`Warning: rule pack "${pack}" not found in cdk-nag\n`);
           continue;
         }
-        const checker = new PackClass();
-        const result = checker.visit(template);
-        if (result && result.findings) {
-          findings.push(...result.findings);
+
+        // Capture findings via a custom NagLogger passed through
+        // NagPackProps.additionalLoggers.  onNonCompliance fires once per
+        // (rule, resource) violation — exactly what we want to emit.
+        const packFindings: Finding[] = [];
+        const logger = {
+          onCompliance: () => { /* no-op */ },
+          onNonCompliance: (data: any) => {
+            const ruleId: string = data.ruleId;
+            const nagPackName: string = data.nagPackName;
+            const ruleInfo: string = data.ruleInfo;
+            const ruleExplanation: string = data.ruleExplanation;
+            const ruleLevel = data.ruleLevel;
+            let resourceId = '';
+            try {
+              resourceId = data.resource?.node?.id ?? '';
+            } catch {
+              resourceId = '';
+            }
+            // cdk-nag's ruleId is already prefixed with the pack name
+            // (e.g. "AwsSolutions-S1"), so only re-prefix if it isn't.
+            const id = ruleId.startsWith(`${nagPackName}-`)
+              ? ruleId
+              : `${nagPackName}-${ruleId}`;
+            packFindings.push({
+              id,
+              name: ruleInfo,
+              description: ruleExplanation,
+              level: levelToString(ruleLevel),
+              resourceId,
+            });
+          },
+          onSuppressed: () => { /* no-op */ },
+          onError: (data: any) => {
+            process.stderr.write(
+              `Warning: cdk-nag rule error in pack "${pack}" for rule ${data.ruleId}: ${data.errorMessage}\n`
+            );
+          },
+          onSuppressedError: () => { /* no-op */ },
+          onNotApplicable: () => { /* no-op */ },
+        };
+
+        // Use a unique outdir so synth does not clobber the user's cwd and
+        // concurrent packs don't race on shared files.
+        tmpOutdir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdk-nag-runner-'));
+
+        const app = new App({ outdir: tmpOutdir });
+        const stack = new Stack(app, 'CdkNagRunnerStack');
+
+        // CfnInclude reads the template from disk — templatePath points at
+        // the user's CloudFormation YAML/JSON file.
+        new CfnInclude(stack, 'Template', {
+          templateFile: templatePath,
+        });
+
+        Aspects.of(app).add(
+          new PackClass({
+            additionalLoggers: [logger],
+            reports: false,
+            verbose: false,
+          })
+        );
+
+        // Synth is what actually runs the Aspect visitors.  cdk-nag adds
+        // validation errors for ERROR-level rules which can abort synth;
+        // swallow those here since we've already collected findings via
+        // the logger by the time the error is thrown.
+        try {
+          app.synth({ validateOnSynthesis: false });
+        } catch (synthErr) {
+          // Findings were collected during the visitor phase that runs
+          // before synth's own validation step, so we can safely continue.
+          process.stderr.write(
+            `Warning: synth for pack "${pack}" ended with: ${(synthErr as Error).message}\n`
+          );
         }
+
+        findings.push(...packFindings);
       } catch (err) {
         process.stderr.write(`Warning: error running rule pack "${pack}": ${(err as Error).message}\n`);
+      } finally {
+        if (tmpOutdir) {
+          try {
+            fs.rmSync(tmpOutdir, { recursive: true, force: true });
+          } catch {
+            // best-effort cleanup
+          }
+        }
       }
     }
   }
