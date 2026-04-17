@@ -45,3 +45,11 @@ Fill this in honestly — "CI is green" is the floor, not the ceiling.
 - [ ] No secrets, credentials, or customer data in the diff.
 - [ ] No new dependencies without justification in the PR description.
 - [ ] No `--no-verify`, `--force`, or skipped CI.
+
+## Security checklist
+
+- [ ] No API keys, tokens, private keys, credentials, or connection strings in code, tests, or fixtures.
+- [ ] No PII in tests or fixtures (real names, emails, phone numbers, SSNs, payment data). Use `example.com` / `test@example.com` / `555-01XX` ranges; if a realistic-looking value is required for a test, add an inline `# gitleaks:allow` comment with justification.
+- [ ] If adding a dependency: checked `npm audit --omit=dev` against it; noted severity in the PR description.
+- [ ] If changing the custom-rule sandbox: added adversarial cases in both `src/test/runner-unit.mjs` and `src/test/functional/runner.test.mjs`.
+- [ ] Confirmed the `Security — all scans passed` CI job is green (gitleaks + npm audit + CodeQL).
