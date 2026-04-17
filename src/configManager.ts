@@ -20,15 +20,15 @@ interface CdkNagConfig {
 export class ConfigManager {
   private static readonly CONFIG_FILE = '.vscode/cdk-nag-config.json';
   private static readonly DEFAULT_RULES = {
-    'AwsSolutions': true,
+    AwsSolutions: true,
     'HIPAA.Security': false,
     'NIST.800-53.R4': false,
-    'PCI DSS 321': false
+    'PCI DSS 321': false,
   };
 
   public static async getConfig(workspaceRoot: string): Promise<CdkNagConfig> {
     const configPath = path.join(workspaceRoot, this.CONFIG_FILE);
-    
+
     try {
       if (fs.existsSync(configPath)) {
         const configContent = await fs.promises.readFile(configPath, 'utf8');
@@ -41,12 +41,12 @@ export class ConfigManager {
     return {
       cdkNagPackage: {
         name: 'cdk-nag',
-        isCustom: false
+        isCustom: false,
       },
       useProjectCdkNag: true,
       defaultRules: { ...this.DEFAULT_RULES },
       customRules: [],
-      suppressions: []
+      suppressions: [],
     };
   }
 
@@ -65,13 +65,18 @@ export class ConfigManager {
     }
   }
 
-  public static async checkProjectCdkNag(workspaceRoot: string, packageName: string): Promise<boolean> {
+  public static async checkProjectCdkNag(
+    workspaceRoot: string,
+    packageName: string
+  ): Promise<boolean> {
     const packageJsonPath = path.join(workspaceRoot, 'package.json');
     try {
       if (fs.existsSync(packageJsonPath)) {
         const packageJson = JSON.parse(await fs.promises.readFile(packageJsonPath, 'utf8'));
-        return packageJson.dependencies?.[packageName] !== undefined || 
-               packageJson.devDependencies?.[packageName] !== undefined;
+        return (
+          packageJson.dependencies?.[packageName] !== undefined ||
+          packageJson.devDependencies?.[packageName] !== undefined
+        );
       }
     } catch (error) {
       console.error('Error checking project CDK-NAG:', error);
@@ -91,11 +96,11 @@ export class ConfigManager {
     // First, let user choose the CDK-NAG package
     const packageOptions = [
       { label: 'Default CDK-NAG', description: 'Use standard cdk-nag package' },
-      { label: 'Custom Package', description: 'Use a custom CDK-NAG implementation' }
+      { label: 'Custom Package', description: 'Use a custom CDK-NAG implementation' },
     ];
 
     const selectedPackage = await vscode.window.showQuickPick(packageOptions, {
-      placeHolder: 'Select CDK-NAG package to use'
+      placeHolder: 'Select CDK-NAG package to use',
     });
 
     if (!selectedPackage) {
@@ -108,7 +113,7 @@ export class ConfigManager {
     if (selectedPackage.label === 'Custom Package') {
       const customPackageName = await vscode.window.showInputBox({
         prompt: 'Enter your custom CDK-NAG package name (e.g., custom-nag)',
-        placeHolder: 'custom-nag'
+        placeHolder: 'custom-nag',
       });
 
       if (!customPackageName) {
@@ -125,12 +130,12 @@ export class ConfigManager {
     const ruleItems = Object.entries(config.defaultRules).map(([rule, enabled]) => ({
       label: rule,
       description: enabled ? 'Enabled' : 'Disabled',
-      picked: enabled
+      picked: enabled,
     }));
 
     const selectedRules = await vscode.window.showQuickPick(ruleItems, {
       canPickMany: true,
-      placeHolder: 'Select CDK-NAG rules to apply'
+      placeHolder: 'Select CDK-NAG rules to apply',
     });
 
     if (selectedRules) {
@@ -138,12 +143,12 @@ export class ConfigManager {
       const newConfig: CdkNagConfig = {
         cdkNagPackage: {
           name: packageName,
-          isCustom: isCustom
+          isCustom: isCustom,
         },
         useProjectCdkNag: hasProjectCdkNag,
         defaultRules: {},
         customRules: config.customRules,
-        suppressions: config.suppressions
+        suppressions: config.suppressions,
       };
 
       // Set all rules to false first
@@ -157,7 +162,9 @@ export class ConfigManager {
       });
 
       await this.saveConfig(workspaceRoot, newConfig);
-      vscode.window.showInformationMessage(`CDK-NAG rules configured successfully using ${packageName}`);
+      vscode.window.showInformationMessage(
+        `CDK-NAG rules configured successfully using ${packageName}`
+      );
     }
   }
 
@@ -165,4 +172,4 @@ export class ConfigManager {
     const config = await this.getConfig(workspaceRoot);
     return config.cdkNagPackage;
   }
-} 
+}

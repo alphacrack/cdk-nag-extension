@@ -1,0 +1,13 @@
+Resources:
+  UnencryptedBucket:
+    Type: AWS::S3::Bucket
+    Properties: {}
+  OpenSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: test
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0

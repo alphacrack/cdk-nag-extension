@@ -2,20 +2,18 @@
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/alphacrack.cdk-nag-validator.svg)](https://marketplace.visualstudio.com/items?itemName=alphacrack.cdk-nag-validator)
 [![Downloads](https://img.shields.io/visual-studio-marketplace/d/alphacrack.cdk-nag-validator.svg)](https://marketplace.visualstudio.com/items?itemName=alphacrack.cdk-nag-validator)
-[![Build Status](https://github.com/alphacrack/cdk-nag-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/alphacrack/cdk-nag-validator/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/alphacrack/cdk-nag-validator.svg)](https://github.com/alphacrack/cdk-nag-validator/blob/main/LICENSE)
+[![Build Status](https://github.com/alphacrack/cdk-nag-extension/actions/workflows/ci.yml/badge.svg)](https://github.com/alphacrack/cdk-nag-extension/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/alphacrack/cdk-nag-extension.svg)](https://github.com/alphacrack/cdk-nag-extension/blob/main/LICENSE)
 
-A powerful VS Code extension that brings AWS CDK-NAG (CDK Nag) validation directly into your editor. This extension helps you write secure and compliant AWS CDK code by providing real-time validation, inline suggestions, and detailed explanations of security and compliance issues.
+A VS Code extension that runs [cdk-nag](https://github.com/cdklabs/cdk-nag) against your AWS CDK project from inside the editor. It synthesises your CDK app, applies the configured rule packs to the resulting CloudFormation template, and surfaces findings as diagnostics in the Problems panel.
 
 ## ✨ Features
 
-- 🔍 **Real-time Validation**: Automatically validates your CDK code as you type
-- 🎯 **Inline Suggestions**: Get immediate feedback with inline warnings and errors
-- 📚 **Multiple Language Support**: Works with TypeScript, JavaScript, Python, and Java CDK code
-- ⚙️ **Configurable Rules**: Enable/disable specific rule packs and customize validation settings
-- 🔧 **Quick Fixes**: Apply suggested fixes directly from the editor
-- 📖 **Detailed Documentation**: Access comprehensive explanations and remediation guides
-- 🛡️ **Multiple Compliance Standards**: Support for AWS Solutions, HIPAA, NIST, PCI DSS, and more
+- 🛡️ **Multiple compliance standards**: `AwsSolutionsChecks`, `HIPAA.SecurityChecks`, `NIST.800-53.R4Checks`, `NIST.800-53.R5Checks`, `PCI.DSS.321Checks`, and `ServerlessChecks` — any subset can be enabled via settings.
+- ⚙️ **Custom rules**: Add project-specific rules targeted at CloudFormation resource types; conditions are evaluated in a sandboxed Node `vm` context with no access to `require`/`process`/globals and a hard 500 ms timeout.
+- 🔍 **On-demand validation**: Commands to validate the current file or the full workspace from the Command Palette.
+- 🎯 **Diagnostics integration**: Findings appear in the Problems panel, anchored to the matching resource declaration in your source when a single-line match is available.
+- 🔒 **No shell execution**: The underlying runner is invoked with `spawn` (shell disabled); all template/config data is passed via a JSON input file — no user input is ever interpolated into a shell string.
 
 ## 🚀 Installation
 
@@ -29,35 +27,34 @@ A powerful VS Code extension that brings AWS CDK-NAG (CDK Nag) validation direct
 
 ## 📋 Requirements
 
-- Visual Studio Code 1.60.0 or higher
-- Node.js 14.x or higher
-- AWS CDK project
-- CDK-NAG installed globally (`npm install -g cdk-nag`)
+- Visual Studio Code 1.96.2 or higher
+- Node.js 18.x, 20.x, or 22.x
+- An AWS CDK project with a `cdk.json` and `aws-cdk-lib` + `cdk-nag` installed as project dependencies (the extension resolves `cdk-nag` from your workspace's `node_modules`)
+- AWS CDK CLI available on PATH (the extension runs `cdk synth --no-staging` in your workspace)
 
 ## 🎮 Usage
 
-### Automatic Validation
+### Commands
 
-The extension automatically validates your CDK code when you save files. You'll see:
-- Inline warnings and errors in the editor
-- A summary in the Problems panel
-- Quick fixes available through the lightbulb menu
+All actions are triggered manually from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
-### Manual Validation
+| Command | Description |
+|---------|-------------|
+| `CDK NAG: Validate Current File` | Synthesises the workspace, runs the configured rule packs + custom rules, and surfaces findings mapped to the active file. |
+| `CDK NAG: Validate Workspace` | Same as above but scopes diagnostic mapping across all `*.ts` files. |
+| `CDK NAG: Configure Rules` | Interactive picker to enable rule packs and add custom rules. |
 
-1. Press `Ctrl+Shift+P` (Windows/Linux) or `Cmd+Shift+P` (Mac)
-2. Type "CDK NAG: Validate Current File"
-3. Press Enter
+> **Note**: The `cdkNagValidator.autoValidate` setting is declared but not yet wired up — validation today is manual. See [backlog item M1](BACKLOG.md).
 
 ### Configuration
 
-Access settings through VS Code's settings panel:
+Access settings through VS Code's settings panel or `settings.json`:
 
 ```json
 {
   "cdkNagValidator.enabledRulePacks": ["AwsSolutionsChecks"],
-  "cdkNagValidator.autoValidate": true,
-  "cdkNagValidator.showInlineSuggestions": true
+  "cdkNagValidator.customRules": [],
+  "cdkNagValidator.autoInstall": false
 }
 ```
 
@@ -69,20 +66,22 @@ Available rule packs:
 - `PCI.DSS.321Checks`
 - `ServerlessChecks`
 
+`cdkNagValidator.autoInstall` (default `false`) is an opt-in switch; when enabled, the extension runs `npm install aws-cdk aws-cdk-lib cdk-nag yaml --save-dev` in your workspace before each validation. Most projects should leave this off and manage these as project deps themselves.
+
 ## 🛠️ Development
 
 ### Prerequisites
 
-- Node.js 14.x or higher
-- npm 6.x or higher
-- VS Code Extension Development Tools
+- Node.js 18.x, 20.x, or 22.x
+- npm 9.x or higher
+- VS Code 1.96.2 or higher
 
 ### Setup
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/alphacrack/cdk-nag-validator.git
-   cd cdk-nag-validator
+   git clone https://github.com/alphacrack/cdk-nag-extension.git
+   cd cdk-nag-extension
    ```
 
 2. Install dependencies:
@@ -97,7 +96,9 @@ Available rule packs:
 
 4. Run tests:
    ```bash
-   npm test
+   npm test                    # sandbox + unit (node:test)
+   npm run test:jest           # Jest unit tests
+   npm run test:integration    # spawns VS Code, checks activation
    ```
 
 ### Debugging
@@ -128,8 +129,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📫 Support
 
-- [GitHub Issues](https://github.com/alphacrack/cdk-nag-validator/issues)
-- [Documentation](https://github.com/alphacrack/cdk-nag-validator/wiki)
+- [GitHub Issues](https://github.com/alphacrack/cdk-nag-extension/issues)
+- [Documentation](https://github.com/alphacrack/cdk-nag-extension/wiki)
 
 ## 🔄 Changelog
 
