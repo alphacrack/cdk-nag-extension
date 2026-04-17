@@ -174,7 +174,7 @@
   },
   "dependencies": {
     "aws-cdk-lib": "^2.250.0",
-    "cdk-nag": "^2.27.0",
+    "cdk-nag": "^2.37.55",
     "yaml": "^2.3.4"
   },
   "lint-staged": {
