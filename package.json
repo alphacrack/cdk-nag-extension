@@ -143,6 +143,8 @@
     "test": "node --test src/test/runner-unit.mjs",
     "test:jest": "jest",
     "test:integration": "npm run compile && node out/test/runTest.js",
+    "test:functional": "npm run compile && node --test src/test/functional/runner.test.mjs",
+    "test:all": "npm run lint && npm run compile && npm test && npm run test:jest && npm run test:functional && npm run test:integration",
     "clean": "rimraf out",
     "package": "vsce package",
     "publish": "vsce publish",
