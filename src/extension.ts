@@ -640,16 +640,19 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   // Register the configure rules command
-  const configureRulesCommand = vscode.commands.registerCommand('cdk-nag-validator.configureRules', async () => {
-    try {
-      await ConfigManager.configureRules(context);
-    } catch (error) {
-      console.error('Error configuring rules:', error);
-      vscode.window.showErrorMessage(
-        `Failed to configure rules: ${error instanceof Error ? error.message : String(error)}`
-      );
+  const configureRulesCommand = vscode.commands.registerCommand(
+    'cdk-nag-validator.configureRules',
+    async () => {
+      try {
+        await ConfigManager.configureRules(context);
+      } catch (error) {
+        console.error('Error configuring rules:', error);
+        vscode.window.showErrorMessage(
+          `Failed to configure rules: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
-  });
+  );
 
   // Add commands to the extension context
   context.subscriptions.push(disposable);
@@ -819,22 +822,26 @@ async function validateCdkCode(document: vscode.TextDocument): Promise<void> {
 
   try {
     // Check if the configured package is available in the project
-    const hasProjectCdkNag = await ConfigManager.checkProjectCdkNag(workspaceRoot, cdkNagPackage.name);
-    
+    const hasProjectCdkNag = await ConfigManager.checkProjectCdkNag(
+      workspaceRoot,
+      cdkNagPackage.name
+    );
+
     // Use project's CDK-NAG if available and configured to do so
-    const packageToUse = hasProjectCdkNag && config.useProjectCdkNag 
-      ? cdkNagPackage.name 
-      : 'cdk-nag'; // Fall back to default if not found or not configured to use project's
+    const packageToUse =
+      hasProjectCdkNag && config.useProjectCdkNag ? cdkNagPackage.name : 'cdk-nag'; // Fall back to default if not found or not configured to use project's
 
     // Run CDK-NAG validation
     const { stdout } = await execAsync(`npx ${packageToUse} --format json`, {
-      cwd: workspaceRoot
+      cwd: workspaceRoot,
     });
 
     // Process the validation results
     const results = JSON.parse(stdout);
     // ... rest of the validation logic ...
   } catch (error) {
-    vscode.window.showErrorMessage(`Validation failed: ${error instanceof Error ? error.message : String(error)}`);
+    vscode.window.showErrorMessage(
+      `Validation failed: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }

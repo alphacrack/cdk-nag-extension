@@ -83,17 +83,13 @@ async function main(): Promise<void> {
   // are never embedded in a shell string.
   if (rulePacks.length > 0) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const cdkNag = require(
-      require.resolve('cdk-nag', { paths: [workspacePath] })
-    );
+    const cdkNag = require(require.resolve('cdk-nag', { paths: [workspacePath] }));
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const awsCdkLib = require(
-      require.resolve('aws-cdk-lib', { paths: [workspacePath] })
-    );
+    const awsCdkLib = require(require.resolve('aws-cdk-lib', { paths: [workspacePath] }));
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const cfnInclude = require(
-      require.resolve('aws-cdk-lib/cloudformation-include', { paths: [workspacePath] })
-    );
+    const cfnInclude = require(require.resolve('aws-cdk-lib/cloudformation-include', {
+      paths: [workspacePath],
+    }));
 
     const { App, Stack, Aspects } = awsCdkLib;
     const { CfnInclude } = cfnInclude;
@@ -123,7 +119,9 @@ async function main(): Promise<void> {
         // (rule, resource) violation — exactly what we want to emit.
         const packFindings: Finding[] = [];
         const logger = {
-          onCompliance: () => { /* no-op */ },
+          onCompliance: () => {
+            /* no-op */
+          },
           onNonCompliance: (data: any) => {
             const ruleId: string = data.ruleId;
             const nagPackName: string = data.nagPackName;
@@ -138,9 +136,7 @@ async function main(): Promise<void> {
             }
             // cdk-nag's ruleId is already prefixed with the pack name
             // (e.g. "AwsSolutions-S1"), so only re-prefix if it isn't.
-            const id = ruleId.startsWith(`${nagPackName}-`)
-              ? ruleId
-              : `${nagPackName}-${ruleId}`;
+            const id = ruleId.startsWith(`${nagPackName}-`) ? ruleId : `${nagPackName}-${ruleId}`;
             packFindings.push({
               id,
               name: ruleInfo,
@@ -149,14 +145,20 @@ async function main(): Promise<void> {
               resourceId,
             });
           },
-          onSuppressed: () => { /* no-op */ },
+          onSuppressed: () => {
+            /* no-op */
+          },
           onError: (data: any) => {
             process.stderr.write(
               `Warning: cdk-nag rule error in pack "${pack}" for rule ${data.ruleId}: ${data.errorMessage}\n`
             );
           },
-          onSuppressedError: () => { /* no-op */ },
-          onNotApplicable: () => { /* no-op */ },
+          onSuppressedError: () => {
+            /* no-op */
+          },
+          onNotApplicable: () => {
+            /* no-op */
+          },
         };
 
         // Use a unique outdir so synth does not clobber the user's cwd and
@@ -196,7 +198,9 @@ async function main(): Promise<void> {
 
         findings.push(...packFindings);
       } catch (err) {
-        process.stderr.write(`Warning: error running rule pack "${pack}": ${(err as Error).message}\n`);
+        process.stderr.write(
+          `Warning: error running rule pack "${pack}": ${(err as Error).message}\n`
+        );
       } finally {
         if (tmpOutdir) {
           try {
