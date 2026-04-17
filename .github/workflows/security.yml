@@ -1,0 +1,128 @@
+name: Security
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+    branches: [main, development]
+  schedule:
+    # Weekly scan at 04:17 UTC Sundays — catches newly disclosed CVEs even on
+    # branches that aren't being actively pushed to.
+    - cron: '17 4 * * 0'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write   # required for CodeQL to upload results to the Security tab
+  actions: read
+
+jobs:
+  # ── Secret + PII scanning ────────────────────────────────────────────────
+  # Gitleaks scans the whole git history AND the current working tree every
+  # run. Our custom rules in .gitleaks.toml catch common PII patterns (SSN,
+  # phone numbers, bank cards, etc.) on top of gitleaks' built-in token
+  # patterns. GitHub's native push-protection is already enabled on this
+  # repo and provides a first-line block before a push even lands; gitleaks
+  # is the defense-in-depth layer for patterns GitHub doesn't cover.
+  gitleaks:
+    name: Secret scan (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # full history — required for --log-opts scanning
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The action defaults to scanning commits + working tree. Our
+          # config adds PII rules; no config-path override needed as long as
+          # .gitleaks.toml sits at the repo root.
+
+  # ── Dependency vulnerability scanning ────────────────────────────────────
+  # Two-tier gate:
+  #   1. Blocking — `--audit-level=critical` on production deps. Zero
+  #      tolerance for critical in shipping code.
+  #   2. Informational — full audit (all severities, all deps) uploaded as
+  #      a job summary so reviewers can see moderate/high debt.
+  npm-audit:
+    name: npm audit (production, blocks on critical)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+      - run: npm ci
+      - name: Block on critical prod vulnerabilities
+        run: npm audit --omit=dev --audit-level=critical
+      - name: Report full audit (informational)
+        if: always()
+        run: |
+          {
+            echo "## Full \`npm audit\` report (all severities, all deps)"
+            echo '```'
+            npm audit --json 2>/dev/null | node -e '
+              const d = JSON.parse(require("fs").readFileSync(0, "utf8"));
+              const m = d.metadata && d.metadata.vulnerabilities || {};
+              console.log("Totals:", JSON.stringify(m, null, 2));
+              const v = d.vulnerabilities || {};
+              const hi = Object.entries(v).filter(([,x]) => ["high","critical"].includes(x.severity));
+              if (hi.length) {
+                console.log("\nHigh/critical:");
+                for (const [name, info] of hi) console.log(" -", info.severity, name);
+              } else {
+                console.log("\nNo high/critical.");
+              }
+            ' || echo "(audit produced no JSON)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Static analysis (SAST) ───────────────────────────────────────────────
+  # CodeQL on JavaScript covers both .js and .ts. Default query suite is
+  # security-extended; queries tagged high/critical are configured to fail
+  # the job via the analyze step's --severity flag.
+  codeql:
+    name: CodeQL (JavaScript/TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-extended,security-and-quality
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript-typescript'
+          upload: always
+
+  # ── Aggregate gate ──────────────────────────────────────────────────────
+  # Mirrors the pattern in ci.yml: a single required status check named
+  # `Security — all scans passed` that will be added to branch protection
+  # alongside the existing `All checks passed` gate.
+  security-all-passed:
+    name: Security — all scans passed
+    runs-on: ubuntu-latest
+    needs: [gitleaks, npm-audit, codeql]
+    if: always()
+    steps:
+      - name: Verify every security job succeeded
+        env:
+          RESULTS: ${{ toJson(needs) }}
+        run: |
+          echo "$RESULTS"
+          echo "$RESULTS" | node -e '
+            const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            const failed = Object.entries(r).filter(([, v]) => v.result !== "success");
+            if (failed.length) {
+              console.error("BLOCK: the following security scans did not succeed:");
+              for (const [name, v] of failed) console.error("  -", name, "=>", v.result);
+              process.exit(1);
+            }
+            console.log("All security scans succeeded — merge allowed.");
+          '

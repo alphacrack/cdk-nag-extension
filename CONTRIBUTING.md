@@ -1,121 +1,119 @@
 # Contributing to CDK NAG Validator
 
-Thank you for your interest in contributing to CDK NAG Validator! This document provides guidelines and instructions for contributing to this project.
+Thanks for your interest in contributing. This document defines the **merge gate** — the rules a change must satisfy before it lands on `main` — and the workflow for getting a PR through it.
 
-## Code of Conduct
+## Merge gate — hard rules
 
-By participating in this project, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
+A PR does **not** merge until **all** of the following are true:
 
-## How Can I Contribute?
+1. **All CI jobs green** — the aggregate `All checks passed` status check (which waits on `lint`, `build` across Node 18/20/22, `unit`, `jest`, `functional`, and `integration`) must succeed. Enforced via branch protection on `main`.
+2. **No skipped tests** — if a test is skipped (`.skip`, `xit`, `xdescribe`, commented-out code), the PR must explain why in the description and link an issue to re-enable it.
+3. **No `--no-verify`, `--force`, or `[skip ci]`** — if a pre-commit hook fails, fix the underlying issue; don't bypass it.
+4. **At least one approving review** from a maintainer.
+5. **Branch is up to date** with target.
 
-### Reporting Bugs
+The single required status check is `All checks passed`. It aggregates every sub-job so one required check covers the whole pipeline.
 
-Before creating bug reports, please check the issue list as you might find out that you don't need to create one. When you are creating a bug report, please include as many details as possible:
-
-- Use a clear and descriptive title
-- Describe the exact steps to reproduce the problem
-- Provide specific examples to demonstrate the steps
-- Describe the behavior you observed after following the steps
-- Explain which behavior you expected to see instead and why
-- Include screenshots if possible
-- Include the version of VS Code and the extension
-- Include the version of CDK and CDK-NAG you're using
-
-### Suggesting Enhancements
-
-If you have a suggestion for a new feature or enhancement, please:
-
-- Use a clear and descriptive title
-- Provide a detailed description of the proposed functionality
-- Explain why this enhancement would be useful
-- List any similar features in other extensions
-
-### Pull Requests
-
-1. Fork the repo and create your branch from `main`
-2. If you've added code that should be tested, add tests
-3. If you've changed APIs, update the documentation
-4. Ensure the test suite passes
-5. Make sure your code lints
-6. Issue that pull request!
-
-## Development Setup
-
-### Prerequisites
-
-- Node.js 14.x or higher
-- npm 6.x or higher
-- VS Code Extension Development Tools
-
-### Getting Started
-
-1. Fork and clone the repository
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Build the extension:
-   ```bash
-   npm run compile
-   ```
-4. Run tests:
-   ```bash
-   npm test
-   ```
-
-### Development Workflow
-
-1. Create a new branch for your feature/fix
-2. Make your changes
-3. Run tests and ensure they pass
-4. Update documentation if necessary
-5. Submit a pull request
-
-### Testing
-
-We use Jest for testing. To run tests:
+## Running the gate locally
 
 ```bash
-npm test
+npm ci
+npm run test:all
 ```
 
-For watching mode:
+`test:all` runs the exact sequence CI runs, in order. If this passes locally on a clean checkout, CI will pass.
+
+## Test layers
+
+| Layer | Command | Purpose |
+|-------|---------|---------|
+| Lint | `npm run lint` | Style + hygiene. Auto-fix with `npm run lint:fix`. |
+| Compile | `npm run compile` | TypeScript correctness across Node 18/20/22. |
+| Unit (sandbox) | `npm test` | `node:test` runner for the custom-rule vm sandbox. |
+| Unit (Jest) | `npm run test:jest` | VS Code API mocks, config defaults. |
+| Functional | `npm run test:functional` | Drives `out/cdkNagRunner.js` against CFN fixtures; asserts specific findings. Regression gate for [#4](https://github.com/alphacrack/cdk-nag-extension/issues/4). |
+| Integration | `npm run test:integration` | Spawns a real VS Code process; verifies activation and command registration. Linux CI runs this under xvfb. |
+
+## When you must add a test
+
+Not optional for these changes:
+
+- **Runner or rule-pack flow** — add a fixture under `src/test/functional/fixtures/` and an assertion in `runner.test.mjs` that would fail without your change.
+- **Sandbox / custom-rule evaluation** — add an adversarial case in `src/test/runner-unit.mjs` *and* a corresponding integration case in `src/test/functional/runner.test.mjs`.
+- **Extension commands or activation** — add or update a case in `src/test/suite/extension.test.ts`.
+- **VS Code API usage in new files** — extend `src/test/__mocks__/vscode.ts` and the Jest suite.
+
+## Manual smoke test before marking ready for review
+
+1. F5 the Extension Development Host.
+2. Open `sample/insecure-stack.ts` (or any CDK file in a project with `cdk.json`).
+3. Run `CDK NAG: Validate Current File` from the Command Palette.
+4. Confirm findings appear in the Problems panel.
+
+If you touched the rule-pack path, the S3 + SG sample must still produce `AwsSolutions-S1`, `S10`, and `EC23` findings.
+
+## Prerequisites
+
+- Node.js 18.x, 20.x, or 22.x
+- npm 9.x or higher
+- VS Code 1.96.2 or higher
+
+## Getting started
 
 ```bash
-npm run test:watch
+git clone https://github.com/alphacrack/cdk-nag-extension.git
+cd cdk-nag-extension
+npm ci
+npm run compile
+npm run test:all
 ```
 
-### Code Style
+## Commit + PR hygiene
 
-We use ESLint for code linting. To check your code:
+- One logical change per PR.
+- Commit messages explain **why**, not just what.
+- Fill out the PR template honestly. The "How this was tested" checklist is load-bearing.
+- Never commit `.env`, credentials, or anything resembling a token.
+
+## Destructive-action policy
+
+- **Never force-push to `main`.**
+- **Never amend or rebase commits that are already on `main`.**
+- Rebasing your own PR branch before merge is fine.
+
+## Release process
+
+1. Bump `version` in `package.json`.
+2. Update `CHANGELOG.md`.
+3. Push to `main` (through a normal PR).
+4. GitHub Actions `release` job runs only on `main` and only after `All checks passed`; it packages + publishes to the VS Code Marketplace using `VSCE_PAT`.
+
+## Setting up / verifying branch protection (maintainers)
 
 ```bash
-npm run lint
+gh api -X PUT repos/alphacrack/cdk-nag-extension/branches/main/protection \
+  -H "Accept: application/vnd.github+json" \
+  --input - <<'JSON'
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": ["All checks passed"]
+  },
+  "enforce_admins": true,
+  "required_pull_request_reviews": {
+    "required_approving_review_count": 1,
+    "dismiss_stale_reviews": true
+  },
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "required_linear_history": false
+}
+JSON
 ```
 
-To automatically fix linting issues:
-
-```bash
-npm run lint:fix
-```
-
-### Documentation
-
-- Update README.md if you're changing functionality
-- Add JSDoc comments for new functions
-- Update CHANGELOG.md with your changes
-
-## Release Process
-
-1. Update version in package.json
-2. Update CHANGELOG.md
-3. Create a new release on GitHub
-4. Publish to VS Code Marketplace
-
-## Questions?
-
-Feel free to open an issue for any questions you might have about contributing.
+Verify with `gh api repos/alphacrack/cdk-nag-extension/branches/main/protection`.
 
 ## License
 
-By contributing to CDK NAG Validator, you agree that your contributions will be licensed under the project's MIT License. 
+By contributing to CDK NAG Validator, you agree that your contributions will be licensed under the project's MIT License.

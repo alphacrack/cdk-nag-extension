@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { ConfigManager } from './configManager';
 
 const execAsync = promisify(exec);
@@ -60,6 +61,59 @@ function shouldAutoValidate(): boolean {
   return config.get<boolean>('autoValidate', true);
 }
 
+// Get auto-install setting (opt-in, defaults to false for safety)
+function shouldAutoInstall(): boolean {
+  const config = vscode.workspace.getConfiguration('cdkNagValidator');
+  return config.get<boolean>('autoInstall', false);
+}
+
+/**
+ * Spawn the compiled cdkNagRunner as a child process.
+ *
+ * All user-controlled data (template path, custom rule objects) is serialised
+ * to a temporary JSON file and passed to the runner as a file-system path.
+ * Nothing is ever interpolated into a shell string, eliminating the
+ * shell-injection vulnerability that existed in the previous node -e approach.
+ *
+ * Custom rule conditions are evaluated inside the runner using
+ * vm.runInNewContext with a sandboxed context — see src/cdkNagRunner.ts.
+ */
+async function spawnRunner(inputPath: string, workspacePath: string): Promise<string> {
+  // The runner script lives next to this file once compiled.
+  const runnerScript = path.join(__dirname, 'cdkNagRunner.js');
+
+  return new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+
+    // Use spawn (not exec/execAsync) so that NO shell is involved.
+    // argv[2] is the path to the JSON input file — a plain file-system path,
+    // not user-supplied data interpolated into a command string.
+    const child = spawn(process.execPath, [runnerScript, inputPath], {
+      cwd: workspacePath,
+      shell: false, // explicit — never invoke a shell
+    });
+
+    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => errChunks.push(chunk));
+
+    child.on('close', code => {
+      const stderr = Buffer.concat(errChunks).toString('utf8').trim();
+      if (code !== 0) {
+        reject(new Error(`CDK-NAG runner exited with code ${code}: ${stderr}`));
+        return;
+      }
+      if (stderr) {
+        // Warnings from the runner are non-fatal — log but continue.
+        console.warn('CDK-NAG runner warnings:', stderr);
+      }
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+
+    child.on('error', err => reject(err));
+  });
+}
+
 // Run CDK-NAG with configured rule packs and custom rules
 async function runCdkNag(workspacePath: string): Promise<string> {
   const rulePacks = getConfiguredRulePacks();
@@ -76,23 +130,33 @@ async function runCdkNag(workspacePath: string): Promise<string> {
     console.log('Running with custom rules:', customRules);
   }
 
-  // First ensure dependencies are installed in the workspace
-  try {
-    console.log('Installing dependencies in workspace...');
-    await execAsync('npm install aws-cdk aws-cdk-lib cdk-nag yaml --save-dev', {
-      cwd: workspacePath,
-    });
-    console.log('Dependencies installed successfully');
-  } catch (error) {
-    console.error('Error installing dependencies:', error);
-    throw new Error(
-      `Failed to install required dependencies: ${
-        error instanceof Error ? error.message : String(error)
-      }`
+  // ── Optional dependency installation (opt-in via cdkNagValidator.autoInstall) ──
+  // Auto-running `npm install` in a user's project on every validation is
+  // invasive and can break lock-files or trigger unexpected side effects.
+  // It is therefore disabled by default; the user must explicitly enable it
+  // in settings ("cdkNagValidator.autoInstall": true).
+  if (shouldAutoInstall()) {
+    try {
+      console.log('autoInstall is enabled — installing workspace dependencies...');
+      await execAsync('npm install aws-cdk aws-cdk-lib cdk-nag yaml --save-dev', {
+        cwd: workspacePath,
+      });
+      console.log('Dependencies installed successfully');
+    } catch (error) {
+      console.error('Error installing dependencies:', error);
+      throw new Error(
+        `Failed to install required dependencies: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  } else {
+    console.log(
+      'autoInstall is disabled (default). Enable "cdkNagValidator.autoInstall" in settings to auto-install dependencies.'
     );
   }
 
-  // First ensure we have a synthesized template
+  // Synthesise the CDK template
   const { stdout: synthOutput, stderr: synthError } = await execAsync('cdk synth --no-staging', {
     cwd: workspacePath,
   });
@@ -102,117 +166,31 @@ async function runCdkNag(workspacePath: string): Promise<string> {
   }
   console.log('CDK synthesis completed successfully');
 
-  // Create a temporary file for the synthesized template
-  const tempDir = path.join(workspacePath, '.cdk-nag-temp');
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir);
-  }
+  // Write synthesised template to a temp file (path never leaves this process
+  // as part of a shell string — it is only passed to the runner via JSON).
+  // Use a unique per-invocation directory so that concurrent validations do
+  // not race on the same files.
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdk-nag-'));
   const templatePath = path.join(tempDir, 'template.yaml');
   fs.writeFileSync(templatePath, synthOutput);
 
-  // Create a temporary file for custom rules
-  const customRulesPath = path.join(tempDir, 'custom-rules.js');
-  if (customRules.length > 0) {
-    const customRulesCode = `
-            const { NagPack } = require('cdk-nag');
-            
-            class CustomRules extends NagPack {
-                constructor() {
-                    super();
-                    this.packName = 'CustomRules';
-                }
-                
-                visit(template) {
-                    const findings = [];
-                    const resources = template.Resources || {};
-                    
-                    Object.entries(resources).forEach(([resourceId, resource]) => {
-                        ${customRules
-                          .map(
-                            rule => `
-                            if (${rule.resourceTypes
-                              .map(type => `resource.Type === '${type}'`)
-                              .join(' || ')}) {
-                                try {
-                                    if (${rule.condition}) {
-                                        findings.push({
-                                            id: '${rule.id}',
-                                            name: '${rule.name}',
-                                            description: '${rule.description}',
-                                            level: '${rule.level}',
-                                            resourceId: resourceId
-                                        });
-                                    }
-                                } catch (error) {
-                                    console.error('Error evaluating rule ${rule.id}:', error);
-                                }
-                            }
-                        `
-                          )
-                          .join('\n')}
-                    });
-                    
-                    return { findings };
-                }
-            }
-            module.exports = { CustomRules };
-        `;
-    fs.writeFileSync(customRulesPath, customRulesCode);
+  // Build the structured input for the runner — pure JSON, no shell escaping.
+  const runnerInput = {
+    templatePath,
+    rulePacks,
+    customRules,
+    workspacePath,
+  };
+  const inputPath = path.join(tempDir, 'runner-input.json');
+  fs.writeFileSync(inputPath, JSON.stringify(runnerInput, null, 2));
+
+  let stdout: string;
+  try {
+    stdout = await spawnRunner(inputPath, workspacePath);
+  } finally {
+    // Always clean up, even on failure
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
-
-  // Run CDK-NAG using the library
-  const { stdout, stderr } = await execAsync(
-    `node -e "
-        const { App } = require('aws-cdk-lib');
-        const cdkNag = require('cdk-nag');
-        ${customRules.length > 0 ? `const { CustomRules } = require('${customRulesPath}');` : ''}
-        const yaml = require('yaml');
-        const fs = require('fs');
-        
-        const app = new App();
-        const templateContent = fs.readFileSync('${templatePath}', 'utf8');
-        const template = yaml.parse(templateContent);
-        
-        const findings = [];
-        
-        // Run built-in rule packs
-        ${rulePacks
-          .map(
-            pack => `
-            const ${pack.toLowerCase()}Checks = new cdkNag.${pack}();
-            const ${pack.toLowerCase()}Result = ${pack.toLowerCase()}Checks.visit(template);
-            if (${pack.toLowerCase()}Result && ${pack.toLowerCase()}Result.findings) {
-                findings.push(...${pack.toLowerCase()}Result.findings);
-            }
-        `
-          )
-          .join('\n')}
-        
-        // Run custom rules if any
-        ${
-          customRules.length > 0
-            ? `
-            const customChecks = new CustomRules();
-            const customResult = customChecks.visit(template);
-            if (customResult && customResult.findings) {
-                findings.push(...customResult.findings);
-            }
-        `
-            : ''
-        }
-        
-        console.log(JSON.stringify(findings, null, 2));
-    "`,
-    { cwd: workspacePath }
-  );
-
-  if (stderr) {
-    console.error('CDK-NAG error:', stderr);
-    throw new Error(`CDK-NAG validation failed: ${stderr}`);
-  }
-
-  // Clean up temporary files
-  fs.rmSync(tempDir, { recursive: true, force: true });
 
   console.log('CDK-NAG output:', stdout);
   return stdout;
@@ -378,19 +356,19 @@ async function checkAndInstallAwsCdk(workspacePath: string): Promise<boolean> {
       console.log('AWS CDK not found, installing...');
     }
 
-    // Install specific version of AWS CDK globally
+    // Install latest AWS CDK globally
     try {
-      // Using version 2.1018.0
-      await execAsync('npm install -g aws-cdk@2.1018.0');
-      console.log('Installed AWS CDK version 2.1018.0 globally');
+      // Using latest version (no hardcoded pin)
+      await execAsync('npm install -g aws-cdk@latest');
+      console.log('Installed latest AWS CDK globally');
       return true;
     } catch (error) {
       console.error('Failed to install AWS CDK globally:', error);
 
       // Try local installation as fallback
       try {
-        await execAsync('npm install aws-cdk@2.1018.0 --save-dev', { cwd: workspacePath });
-        console.log('Installed AWS CDK version 2.1018.0 locally');
+        await execAsync('npm install aws-cdk@latest --save-dev', { cwd: workspacePath });
+        console.log('Installed latest AWS CDK locally');
         return true;
       } catch (localError) {
         console.error('Failed to install AWS CDK locally:', localError);
@@ -411,13 +389,13 @@ async function checkNodeVersion(): Promise<boolean> {
   try {
     const { stdout } = await execAsync('node --version');
     const version = stdout.trim().replace('v', '');
-    const majorVersion = parseInt(version.split('.')[1]);
+    const majorVersion = parseInt(version.split('.')[0]);
 
-    // AWS CDK 2.1018.0 supports Node.js 14.x, 16.x, 18.x, 20.x, and 22.x
+    // AWS CDK latest supports Node.js 14.x, 16.x, 18.x, 20.x, and 22.x
     const supportedVersions = [14, 16, 18, 20, 22];
 
     if (!supportedVersions.includes(majorVersion)) {
-      const message = `Warning: You are using Node.js ${version}. AWS CDK 2.1018.0 is tested with Node.js 14.x, 16.x, 18.x, 20.x, and 22.x. You may encounter compatibility issues.`;
+      const message = `Warning: You are using Node.js ${version}. AWS CDK (latest) is tested with Node.js 14.x, 16.x, 18.x, 20.x, and 22.x. You may encounter compatibility issues.`;
       vscode.window.showWarningMessage(message);
       console.warn(message);
       // Return true to allow the extension to continue with a warning
@@ -571,8 +549,19 @@ async function validateFile(document: vscode.TextDocument): Promise<void> {
   const output = await runCdkNag(workspaceFolder.uri.fsPath);
   console.log('CDK-NAG output:', output);
 
-  // Parse the output
-  const findings = JSON.parse(output);
+  // Parse the output (guard against malformed runner output)
+  let findings: any[];
+  try {
+    findings = JSON.parse(output);
+  } catch (parseError) {
+    const preview = (output ?? '').toString().slice(0, 200);
+    const message = `Failed to parse CDK-NAG output as JSON: ${
+      parseError instanceof Error ? parseError.message : String(parseError)
+    }. Output preview: ${preview}`;
+    console.error(message);
+    vscode.window.showErrorMessage(message);
+    throw new Error(message);
+  }
   console.log('Parsed findings:', findings);
 
   if (findings.length > 0) {
@@ -651,9 +640,19 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   // Register the configure rules command
-  const configureRulesCommand = vscode.commands.registerCommand('cdk-nag-validator.configureRules', () => {
-    ConfigManager.configureRules(context);
-  });
+  const configureRulesCommand = vscode.commands.registerCommand(
+    'cdk-nag-validator.configureRules',
+    async () => {
+      try {
+        await ConfigManager.configureRules(context);
+      } catch (error) {
+        console.error('Error configuring rules:', error);
+        vscode.window.showErrorMessage(
+          `Failed to configure rules: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  );
 
   // Add commands to the extension context
   context.subscriptions.push(disposable);
@@ -823,22 +822,26 @@ async function validateCdkCode(document: vscode.TextDocument): Promise<void> {
 
   try {
     // Check if the configured package is available in the project
-    const hasProjectCdkNag = await ConfigManager.checkProjectCdkNag(workspaceRoot, cdkNagPackage.name);
-    
+    const hasProjectCdkNag = await ConfigManager.checkProjectCdkNag(
+      workspaceRoot,
+      cdkNagPackage.name
+    );
+
     // Use project's CDK-NAG if available and configured to do so
-    const packageToUse = hasProjectCdkNag && config.useProjectCdkNag 
-      ? cdkNagPackage.name 
-      : 'cdk-nag'; // Fall back to default if not found or not configured to use project's
+    const packageToUse =
+      hasProjectCdkNag && config.useProjectCdkNag ? cdkNagPackage.name : 'cdk-nag'; // Fall back to default if not found or not configured to use project's
 
     // Run CDK-NAG validation
     const { stdout } = await execAsync(`npx ${packageToUse} --format json`, {
-      cwd: workspaceRoot
+      cwd: workspaceRoot,
     });
 
     // Process the validation results
     const results = JSON.parse(stdout);
     // ... rest of the validation logic ...
   } catch (error) {
-    vscode.window.showErrorMessage(`Validation failed: ${error instanceof Error ? error.message : String(error)}`);
+    vscode.window.showErrorMessage(
+      `Validation failed: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
