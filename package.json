@@ -177,6 +177,9 @@
     "cdk-nag": "^2.37.55",
     "yaml": "^2.3.4"
   },
+  "overrides": {
+    "brace-expansion": "^2.1.0"
+  },
   "lint-staged": {
     "*.{ts,tsx}": [
       "eslint --fix",
