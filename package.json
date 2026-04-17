@@ -142,7 +142,7 @@
     "lint:fix": "eslint src --ext ts --fix",
     "test": "node --test src/test/runner-unit.mjs",
     "test:jest": "jest",
-    "test:integration": "ts-node src/test/runTest.ts",
+    "test:integration": "npm run compile && node out/test/runTest.js",
     "clean": "rimraf out",
     "package": "vsce package",
     "publish": "vsce publish",

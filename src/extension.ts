@@ -3,6 +3,7 @@ import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { ConfigManager } from './configManager';
 
 const execAsync = promisify(exec);
@@ -167,10 +168,9 @@ async function runCdkNag(workspacePath: string): Promise<string> {
 
   // Write synthesised template to a temp file (path never leaves this process
   // as part of a shell string — it is only passed to the runner via JSON).
-  const tempDir = path.join(workspacePath, '.cdk-nag-temp');
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir);
-  }
+  // Use a unique per-invocation directory so that concurrent validations do
+  // not race on the same files.
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdk-nag-'));
   const templatePath = path.join(tempDir, 'template.yaml');
   fs.writeFileSync(templatePath, synthOutput);
 
@@ -356,19 +356,19 @@ async function checkAndInstallAwsCdk(workspacePath: string): Promise<boolean> {
       console.log('AWS CDK not found, installing...');
     }
 
-    // Install specific version of AWS CDK globally
+    // Install latest AWS CDK globally
     try {
-      // Using version 2.1018.0
-      await execAsync('npm install -g aws-cdk@2.1018.0');
-      console.log('Installed AWS CDK version 2.1018.0 globally');
+      // Using latest version (no hardcoded pin)
+      await execAsync('npm install -g aws-cdk@latest');
+      console.log('Installed latest AWS CDK globally');
       return true;
     } catch (error) {
       console.error('Failed to install AWS CDK globally:', error);
 
       // Try local installation as fallback
       try {
-        await execAsync('npm install aws-cdk@2.1018.0 --save-dev', { cwd: workspacePath });
-        console.log('Installed AWS CDK version 2.1018.0 locally');
+        await execAsync('npm install aws-cdk@latest --save-dev', { cwd: workspacePath });
+        console.log('Installed latest AWS CDK locally');
         return true;
       } catch (localError) {
         console.error('Failed to install AWS CDK locally:', localError);
@@ -389,13 +389,13 @@ async function checkNodeVersion(): Promise<boolean> {
   try {
     const { stdout } = await execAsync('node --version');
     const version = stdout.trim().replace('v', '');
-    const majorVersion = parseInt(version.split('.')[1]);
+    const majorVersion = parseInt(version.split('.')[0]);
 
-    // AWS CDK 2.1018.0 supports Node.js 14.x, 16.x, 18.x, 20.x, and 22.x
+    // AWS CDK latest supports Node.js 14.x, 16.x, 18.x, 20.x, and 22.x
     const supportedVersions = [14, 16, 18, 20, 22];
 
     if (!supportedVersions.includes(majorVersion)) {
-      const message = `Warning: You are using Node.js ${version}. AWS CDK 2.1018.0 is tested with Node.js 14.x, 16.x, 18.x, 20.x, and 22.x. You may encounter compatibility issues.`;
+      const message = `Warning: You are using Node.js ${version}. AWS CDK (latest) is tested with Node.js 14.x, 16.x, 18.x, 20.x, and 22.x. You may encounter compatibility issues.`;
       vscode.window.showWarningMessage(message);
       console.warn(message);
       // Return true to allow the extension to continue with a warning
@@ -549,8 +549,19 @@ async function validateFile(document: vscode.TextDocument): Promise<void> {
   const output = await runCdkNag(workspaceFolder.uri.fsPath);
   console.log('CDK-NAG output:', output);
 
-  // Parse the output
-  const findings = JSON.parse(output);
+  // Parse the output (guard against malformed runner output)
+  let findings: any[];
+  try {
+    findings = JSON.parse(output);
+  } catch (parseError) {
+    const preview = (output ?? '').toString().slice(0, 200);
+    const message = `Failed to parse CDK-NAG output as JSON: ${
+      parseError instanceof Error ? parseError.message : String(parseError)
+    }. Output preview: ${preview}`;
+    console.error(message);
+    vscode.window.showErrorMessage(message);
+    throw new Error(message);
+  }
   console.log('Parsed findings:', findings);
 
   if (findings.length > 0) {
@@ -629,9 +640,19 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   // Register the configure rules command
-  const configureRulesCommand = vscode.commands.registerCommand('cdk-nag-validator.configureRules', () => {
-    ConfigManager.configureRules(context);
-  });
+  const configureRulesCommand = vscode.commands.registerCommand(
+    'cdk-nag-validator.configureRules',
+    async () => {
+      try {
+        await ConfigManager.configureRules(context);
+      } catch (error) {
+        console.error('Error configuring rules:', error);
+        vscode.window.showErrorMessage(
+          `Failed to configure rules: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  );
 
   // Add commands to the extension context
   context.subscriptions.push(disposable);
@@ -801,22 +822,26 @@ async function validateCdkCode(document: vscode.TextDocument): Promise<void> {
 
   try {
     // Check if the configured package is available in the project
-    const hasProjectCdkNag = await ConfigManager.checkProjectCdkNag(workspaceRoot, cdkNagPackage.name);
-    
+    const hasProjectCdkNag = await ConfigManager.checkProjectCdkNag(
+      workspaceRoot,
+      cdkNagPackage.name
+    );
+
     // Use project's CDK-NAG if available and configured to do so
-    const packageToUse = hasProjectCdkNag && config.useProjectCdkNag 
-      ? cdkNagPackage.name 
-      : 'cdk-nag'; // Fall back to default if not found or not configured to use project's
+    const packageToUse =
+      hasProjectCdkNag && config.useProjectCdkNag ? cdkNagPackage.name : 'cdk-nag'; // Fall back to default if not found or not configured to use project's
 
     // Run CDK-NAG validation
     const { stdout } = await execAsync(`npx ${packageToUse} --format json`, {
-      cwd: workspaceRoot
+      cwd: workspaceRoot,
     });
 
     // Process the validation results
     const results = JSON.parse(stdout);
     // ... rest of the validation logic ...
   } catch (error) {
-    vscode.window.showErrorMessage(`Validation failed: ${error instanceof Error ? error.message : String(error)}`);
+    vscode.window.showErrorMessage(
+      `Validation failed: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
