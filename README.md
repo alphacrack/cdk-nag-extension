@@ -77,8 +77,8 @@ The following features are **planned but not yet wired up**. They are declared i
 
 | Feature | Setting / Surface | Status |
 |---|---|---|
-| Auto-validate on save | `cdkNagValidator.autoValidate` | Setting declared; save listener in PR 3a. |
-| Progress notification + cancellation | — | PR 3a |
+| Auto-validate on save | `cdkNagValidator.autoValidate` | ✅ Shipped (PR 3a) |
+| Progress notification + cancellation | — | ✅ Shipped (PR 3a) |
 | Quick-fix lightbulbs for common findings | `COMMON_FIXES` map | PR 3b |
 | Hover tooltips with rule docs | — | PR 3b |
 | Suppressions persisted to `.vscode/cdk-nag-config.json` | — | PR 3b |
@@ -92,7 +92,6 @@ See [BACKLOG.md](BACKLOG.md) for the full engineering backlog.
 
 - **Languages** — only TypeScript and JavaScript CDK projects are supported. Python, Java, and .NET CDK apps are not currently validated.
 - **Inline suggestions** — the `cdkNagValidator.showInlineSuggestions` setting exists but is not yet consumed; quick-fixes land in PR 3b.
-- **Auto-validate on save** — the `cdkNagValidator.autoValidate` setting exists but is not yet wired up; validation today is manual. Tracked as PR 3a.
 - **Large templates** — diagnostics anchor to a single-line regex match of the construct; multi-line constructor blocks may not be anchored precisely. Tracked as M3 in BACKLOG.md; AST-based matching lands in PR 3b.
 - **Dependencies** — the extension requires `aws-cdk-lib` and `cdk-nag` to be installed in your workspace. A graceful install prompt lands in PR 8.
 

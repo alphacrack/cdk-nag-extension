@@ -19,8 +19,17 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { ConfigManager } from './configManager';
 import { getOutputChannel, disposeOutputChannel } from './outputChannel';
+import { createSaveListener } from './saveListener';
 
 const execAsync = promisify(exec);
+
+/** Thrown when the user cancels a validation via the progress notification. */
+class ValidationCancelledError extends Error {
+  constructor() {
+    super('Validation cancelled by user');
+    this.name = 'ValidationCancelledError';
+  }
+}
 
 // DiagnosticCollection is initialised in activate() and cleaned up via
 // context.subscriptions.
@@ -175,13 +184,21 @@ export async function migrateLegacyConfig(): Promise<boolean> {
 //
 // Custom rule conditions are evaluated inside the runner using
 // vm.runInNewContext with a sandboxed context — see src/cdkNagRunner.ts.
-async function spawnRunner(inputPath: string, workspacePath: string): Promise<string> {
+//
+// If `token` is provided and fires cancellation, the child process is killed
+// with SIGTERM and the promise rejects with a ValidationCancelledError.
+export async function spawnRunner(
+  inputPath: string,
+  workspacePath: string,
+  token?: vscode.CancellationToken
+): Promise<string> {
   const channel = getOutputChannel();
   const runnerScript = path.join(__dirname, 'cdkNagRunner.js');
 
   return new Promise<string>((resolve, reject) => {
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
+    let cancelled = false;
 
     // Use spawn (not exec/execAsync) so that NO shell is involved.
     // argv[2] is the path to the JSON input file — a plain file-system path,
@@ -191,10 +208,29 @@ async function spawnRunner(inputPath: string, workspacePath: string): Promise<st
       shell: false, // explicit — never invoke a shell
     });
 
+    const cancelSub = token?.onCancellationRequested(() => {
+      cancelled = true;
+      channel.warn('Validation cancelled — sending SIGTERM to runner');
+      // SIGTERM gives the runner a chance to clean up; if it ignores, the
+      // 'close' handler below still resolves the promise.
+      try {
+        child.kill('SIGTERM');
+      } catch (err) {
+        channel.warn(
+          `Failed to kill runner process: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    });
+
     child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => errChunks.push(chunk));
 
     child.on('close', code => {
+      cancelSub?.dispose();
+      if (cancelled) {
+        reject(new ValidationCancelledError());
+        return;
+      }
       const stderr = Buffer.concat(errChunks).toString('utf8').trim();
       if (code !== 0) {
         reject(new Error(`CDK-NAG runner exited with code ${code}: ${stderr}`));
@@ -206,12 +242,25 @@ async function spawnRunner(inputPath: string, workspacePath: string): Promise<st
       resolve(Buffer.concat(chunks).toString('utf8'));
     });
 
-    child.on('error', err => reject(err));
+    child.on('error', err => {
+      cancelSub?.dispose();
+      reject(err);
+    });
   });
 }
 
-// Run CDK-NAG with configured rule packs and custom rules
-async function runCdkNag(workspacePath: string): Promise<string> {
+// Run CDK-NAG with configured rule packs and custom rules.
+//
+// `progress` — if supplied, receives pack-by-pack report() updates so the
+// notification surface can show what stage the validation is at.
+// `token`    — if supplied, kills the runner child process on cancel. The
+// async fs operations in this function check the token at awaitable points
+// so we can abort between steps rather than only at the runner step.
+async function runCdkNag(
+  workspacePath: string,
+  progress?: vscode.Progress<{ message?: string; increment?: number }>,
+  token?: vscode.CancellationToken
+): Promise<string> {
   const channel = getOutputChannel();
   const rulePacks = getConfiguredRulePacks();
   const customRules = getCustomRules();
@@ -227,6 +276,10 @@ async function runCdkNag(workspacePath: string): Promise<string> {
     channel.info(`Running with ${customRules.length} custom rule(s)`);
   }
 
+  if (token?.isCancellationRequested) {
+    throw new ValidationCancelledError();
+  }
+
   // ── Optional dependency installation (opt-in via cdkNagValidator.autoInstall) ──
   // Auto-running `npm install` in a user's project on every validation is
   // invasive and can break lock-files or trigger unexpected side effects.
@@ -234,6 +287,7 @@ async function runCdkNag(workspacePath: string): Promise<string> {
   // in settings ("cdkNagValidator.autoInstall": true).
   if (shouldAutoInstall()) {
     try {
+      progress?.report({ message: 'Installing workspace dependencies…' });
       channel.info('autoInstall is enabled — installing workspace dependencies...');
       await execAsync('npm install aws-cdk aws-cdk-lib cdk-nag yaml --save-dev', {
         cwd: workspacePath,
@@ -251,7 +305,12 @@ async function runCdkNag(workspacePath: string): Promise<string> {
     }
   }
 
+  if (token?.isCancellationRequested) {
+    throw new ValidationCancelledError();
+  }
+
   // Synthesise the CDK template
+  progress?.report({ message: 'Synthesising CDK template…' });
   const { stdout: synthOutput, stderr: synthError } = await execAsync('cdk synth --no-staging', {
     cwd: workspacePath,
   });
@@ -261,11 +320,15 @@ async function runCdkNag(workspacePath: string): Promise<string> {
   }
   channel.info('CDK synthesis completed successfully');
 
+  if (token?.isCancellationRequested) {
+    throw new ValidationCancelledError();
+  }
+
   // Write synthesised template to a temp file. Use a unique per-invocation
   // directory so concurrent validations do not race on the same files.
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdk-nag-'));
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'cdk-nag-'));
   const templatePath = path.join(tempDir, 'template.yaml');
-  fs.writeFileSync(templatePath, synthOutput);
+  await fs.promises.writeFile(templatePath, synthOutput);
 
   // Build the structured input for the runner — pure JSON, no shell escaping.
   const runnerInput = {
@@ -275,14 +338,21 @@ async function runCdkNag(workspacePath: string): Promise<string> {
     workspacePath,
   };
   const inputPath = path.join(tempDir, 'runner-input.json');
-  fs.writeFileSync(inputPath, JSON.stringify(runnerInput, null, 2));
+  await fs.promises.writeFile(inputPath, JSON.stringify(runnerInput, null, 2));
 
   let stdout: string;
   try {
-    stdout = await spawnRunner(inputPath, workspacePath);
+    progress?.report({ message: `Applying ${rulePacks.length} rule pack(s)…` });
+    stdout = await spawnRunner(inputPath, workspacePath, token);
   } finally {
-    // Always clean up, even on failure.
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    // Always clean up, even on failure or cancellation.
+    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(err => {
+      channel.warn(
+        `Failed to clean up temp dir ${tempDir}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    });
   }
 
   channel.debug(`CDK-NAG output: ${stdout}`);
@@ -371,7 +441,11 @@ async function mapFindingsToSourceLocations(
 }
 
 // Validate a file
-async function validateFile(document: vscode.TextDocument): Promise<void> {
+async function validateFile(
+  document: vscode.TextDocument,
+  progress?: vscode.Progress<{ message?: string; increment?: number }>,
+  token?: vscode.CancellationToken
+): Promise<void> {
   const channel = getOutputChannel();
   channel.info(`Starting file validation: ${document.fileName}`);
 
@@ -380,7 +454,7 @@ async function validateFile(document: vscode.TextDocument): Promise<void> {
     throw new Error('No workspace folder found');
   }
 
-  const output = await runCdkNag(workspaceFolder.uri.fsPath);
+  const output = await runCdkNag(workspaceFolder.uri.fsPath, progress, token);
 
   // Parse the output (guard against malformed runner output).
   let findings: Array<{
@@ -413,10 +487,14 @@ async function validateFile(document: vscode.TextDocument): Promise<void> {
 }
 
 // Validate the entire workspace
-async function validateWorkspace(workspaceFolder: vscode.WorkspaceFolder): Promise<void> {
+async function validateWorkspace(
+  workspaceFolder: vscode.WorkspaceFolder,
+  progress?: vscode.Progress<{ message?: string; increment?: number }>,
+  token?: vscode.CancellationToken
+): Promise<void> {
   const channel = getOutputChannel();
   channel.info(`Running CDK-NAG validation for workspace: ${workspaceFolder.uri.fsPath}`);
-  const output = await runCdkNag(workspaceFolder.uri.fsPath);
+  const output = await runCdkNag(workspaceFolder.uri.fsPath, progress, token);
 
   let findings: Array<{
     id: string;
@@ -458,6 +536,42 @@ async function validateWorkspace(workspaceFolder: vscode.WorkspaceFolder): Promi
   }
 }
 
+// ── Progress + cancellation wrapper ─────────────────────────────────────────
+// Every validation entry-point (command, save listener) funnels through this
+// so the user always sees a notification with a cancel button. Cancellation
+// throws ValidationCancelledError, which we swallow silently — the user asked
+// to stop, not to see an error.
+async function runValidationWithProgress(
+  title: string,
+  task: (
+    progress: vscode.Progress<{ message?: string; increment?: number }>,
+    token: vscode.CancellationToken
+  ) => Promise<void>,
+  failureContext: string
+): Promise<void> {
+  const channel = getOutputChannel();
+  try {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title,
+        cancellable: true,
+      },
+      async (progress, token) => {
+        await task(progress, token);
+      }
+    );
+  } catch (error) {
+    if (error instanceof ValidationCancelledError) {
+      channel.info(`${failureContext} cancelled by user`);
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    channel.error(`Error during ${failureContext}: ${message}`);
+    void vscode.window.showErrorMessage(`${failureContext} failed: ${message}`);
+  }
+}
+
 // ── Activation ───────────────────────────────────────────────────────────────
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const channel = getOutputChannel();
@@ -490,16 +604,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         void vscode.window.showErrorMessage('No active editor found');
         return;
       }
-      try {
-        await validateFile(editor.document);
-      } catch (error) {
-        channel.error(
-          `Error during validation: ${error instanceof Error ? error.message : String(error)}`
-        );
-        void vscode.window.showErrorMessage(
-          `Validation failed: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
+      await runValidationWithProgress(
+        'CDK NAG: Validating current file…',
+        (progress, token) => validateFile(editor.document, progress, token),
+        'validation'
+      );
     })
   );
 
@@ -510,18 +619,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         void vscode.window.showErrorMessage('No workspace folder found');
         return;
       }
-      try {
-        await validateWorkspace(workspaceFolder);
-      } catch (error) {
-        channel.error(
-          `Error during workspace validation: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-        void vscode.window.showErrorMessage(
-          `Workspace validation failed: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
+      await runValidationWithProgress(
+        'CDK NAG: Validating workspace…',
+        (progress, token) => validateWorkspace(workspaceFolder, progress, token),
+        'workspace validation'
+      );
     })
   );
 
@@ -541,8 +643,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   // Clear diagnostics when the user starts editing — they're no longer valid
-  // for the unsaved version of the document. A save listener that re-runs
-  // validation lands in PR 3a (see BACKLOG M1).
+  // for the unsaved version of the document.
   context.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument(event => {
       diagnosticCollection.delete(event.document.uri);
@@ -552,6 +653,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument(document => {
       diagnosticCollection.delete(document.uri);
+    })
+  );
+
+  // Auto-validate on save — gated by cdkNagValidator.autoValidate (default
+  // true). Debounces per-URI so rapid "Save All" or format-on-save loops
+  // coalesce into a single validation run.
+  context.subscriptions.push(
+    createSaveListener({
+      shouldAutoValidate,
+      validate: document =>
+        runValidationWithProgress(
+          `CDK NAG: Validating ${path.basename(document.fileName)}…`,
+          (progress, token) => validateFile(document, progress, token),
+          'auto-validate on save'
+        ),
+      log: {
+        info: msg => channel.info(msg),
+        warn: msg => channel.warn(msg),
+        error: msg => channel.error(msg),
+      },
     })
   );
 

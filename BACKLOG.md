@@ -52,8 +52,8 @@
 
 | ID | Title | Category | Effort | Status |
 |----|-------|----------|--------|--------|
-| M1 | **Implement auto-validate on save** | Feature | M | Pending |
-|    | Register `onDidSaveTextDocument` listener gated by `autoValidate` setting. The setting exists but is never used. | | | |
+| M1 | **Implement auto-validate on save** | Feature | M | ✅ Done (PR 3a) |
+|    | `src/saveListener.ts` exports `createSaveListener({ shouldAutoValidate, validate, log, debounceMs })` — per-URI debounced, gated by setting, re-read on every save (not snapshotted). Wired in `activate()` and registered to `context.subscriptions`. Jest-covered: 9 tests for debounce coalescing, language-id gating, rapid-save deduplication, dispose semantics. | | | |
 | M2 | **Implement CodeActionProvider for quick fixes** | Feature | L | Pending |
 |    | Wire up `COMMON_FIXES` map to a registered CodeActionProvider so users get lightbulb suggestions. | | | |
 | M3 | **Fix regex to handle multi-line CDK constructs** | Bug | M | Pending |
@@ -75,10 +75,10 @@
 |    | Show remediation guidance on hover over CDK-NAG diagnostics. | | | |
 | L2 | **Implement suppression support** | Feature | M | Pending |
 |    | ConfigManager defines `suppressions` array but it's never used. Allow users to suppress specific findings. | | | |
-| L3 | **Replace sync fs calls with async** | Performance | S | Pending |
-|    | Lines 336, 351, 699–700 use `readFileSync` in async context. Switch to `fs.promises`. | | | |
-| L4 | **Add progress indicator during validation** | UX | S | Pending |
-|    | `cdk synth` can take 30+ seconds. Show `vscode.window.withProgress()` to the user. | | | |
+| L3 | **Replace sync fs calls with async** | Performance | S | ✅ Done (PR 3a) |
+|    | `runCdkNag` now uses `fs.promises.mkdtemp`, `fs.promises.writeFile`, `fs.promises.rm` instead of the `*Sync` variants so long validations do not block the extension host. | | | |
+| L4 | **Add progress indicator during validation** | UX | S | ✅ Done (PR 3a) |
+|    | `runValidationWithProgress` helper wraps every validation entry-point in `vscode.window.withProgress({ location: Notification, cancellable: true })`. The cancel button sends `SIGTERM` to the runner and the extension silently suppresses the resulting `ValidationCancelledError`. | | | |
 
 ---
 
