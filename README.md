@@ -137,6 +137,19 @@ npm run compile
 npm run package    # produces cdk-nag-validator-<version>.vsix
 ```
 
+### Releases
+
+Releases are **tag-triggered**, not merge-triggered. Cutting a release is three commands:
+
+```bash
+npm version patch          # bump package.json and create a git tag (or minor/major)
+git push origin main --follow-tags
+```
+
+The `release.yml` workflow validates that `package.json` and the tag agree, runs the full four-layer test suite, packages the `.vsix`, attaches it to a GitHub Release (with auto-generated notes from the changelog), and publishes to the VS Code Marketplace via `vsce publish` (if `VSCE_PAT` is configured).
+
+Every PR against `main` or `development` must touch `CHANGELOG.md` — the `CHANGELOG check` workflow enforces this for any PR that modifies `src/`, `package.json`, `.github/workflows/`, `media/`, `.vscodeignore`, or `tsconfig.json`. Doc-only and dependency-bump PRs are exempt via the `docs`, `chore`, `dependencies`, or `skip-changelog` labels.
+
 ## 🤝 Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, commit conventions, and the four-layer test expectation for every PR.

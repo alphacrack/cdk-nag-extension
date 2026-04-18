@@ -92,6 +92,6 @@
 
 - **License**: MIT — fully compliant. All deps compatible (Apache-2.0, ISC, BSD-2-Clause, MIT).
 - **No NOTICE file needed.**
-- **Marketplace readiness**: icon + metadata + slim VSIX landed in PR 2. Remaining: Marketplace publish wiring is PR 4's release workflow.
+- **Marketplace readiness**: icon + metadata + slim VSIX landed in PR 2. Tag-triggered release workflow (`.github/workflows/release.yml`) with full test-gate + VSIX GitHub Release asset + Marketplace publish landed in PR 4. The `release` job was removed from `ci.yml` so publishing is decoupled from merge.
 - **aws-cdk-lib as production dep**: Stripped from the `.vsix` via `.vscodeignore` in PR 2 (resolved from the user's workspace at runtime). Formal `peerDependencies` migration deferred to PR 8.
 - **`vsce` package**: Migrated to `@vscode/vsce@^3.2.1` in PR 2.
