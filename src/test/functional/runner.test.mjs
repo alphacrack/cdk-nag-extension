@@ -415,3 +415,80 @@ describe('cdkNagRunner — cancellation (SIGTERM)', () => {
     }
   });
 });
+
+describe('cdkNagRunner — suppressions', () => {
+  // PR 3b: the runner accepts a `suppressions` array in its input JSON and
+  // drops matching findings before writing stdout. Suppressions can be either
+  // an exact rule id ("AwsSolutions-S1") that drops all instances, or a
+  // "ruleId:resourceId" tuple for per-resource suppression.
+  test('without suppressions, multiple AwsSolutions findings are present', () => {
+    const { findings, exitCode } = runRunner({
+      templatePath: templatePath('insecure-s3-and-sg.yaml'),
+      rulePacks: ['AwsSolutionsChecks'],
+      customRules: [],
+      workspacePath: REPO_ROOT,
+    });
+    assert.equal(exitCode, 0);
+    const s10 = findings.find(f => f.id === 'AwsSolutions-S10');
+    const ec23 = findings.find(f => f.id === 'AwsSolutions-EC23');
+    assert.ok(s10, 'sanity: S10 should be present without suppressions');
+    assert.ok(ec23, 'sanity: EC23 should be present without suppressions');
+  });
+
+  test('rule id in suppressions removes every instance of that rule', () => {
+    const { findings, exitCode } = runRunner({
+      templatePath: templatePath('insecure-s3-and-sg.yaml'),
+      rulePacks: ['AwsSolutionsChecks'],
+      customRules: [],
+      workspacePath: REPO_ROOT,
+      suppressions: ['AwsSolutions-S10'],
+    });
+    assert.equal(exitCode, 0);
+    const s10 = findings.find(f => f.id === 'AwsSolutions-S10');
+    assert.equal(s10, undefined, 'S10 should have been suppressed');
+    // Unrelated findings still fire.
+    const ec23 = findings.find(f => f.id === 'AwsSolutions-EC23');
+    assert.ok(ec23, 'EC23 should still be present — not suppressed');
+  });
+
+  test('ruleId:resourceId tuple suppresses only the matching resource', () => {
+    // First run without suppressions to learn the resource ids.
+    const baseline = runRunner({
+      templatePath: templatePath('insecure-s3-and-sg.yaml'),
+      rulePacks: ['AwsSolutionsChecks'],
+      customRules: [],
+      workspacePath: REPO_ROOT,
+    });
+    const ec23 = baseline.findings.find(f => f.id === 'AwsSolutions-EC23');
+    assert.ok(ec23, 'sanity: baseline EC23 must exist to drive this test');
+
+    const { findings, exitCode } = runRunner({
+      templatePath: templatePath('insecure-s3-and-sg.yaml'),
+      rulePacks: ['AwsSolutionsChecks'],
+      customRules: [],
+      workspacePath: REPO_ROOT,
+      suppressions: [`AwsSolutions-EC23:${ec23.resourceId}`],
+    });
+    assert.equal(exitCode, 0);
+    const suppressedEc23 = findings.find(
+      f => f.id === 'AwsSolutions-EC23' && f.resourceId === ec23.resourceId
+    );
+    assert.equal(
+      suppressedEc23,
+      undefined,
+      'EC23 for the specific resource should have been suppressed'
+    );
+  });
+
+  test('unknown suppressions entries are silently ignored', () => {
+    const { findings, exitCode } = runRunner({
+      templatePath: templatePath('insecure-s3-and-sg.yaml'),
+      rulePacks: ['AwsSolutionsChecks'],
+      customRules: [],
+      workspacePath: REPO_ROOT,
+      suppressions: ['NotARealRule-999', 'AwsSolutions-NEVER'],
+    });
+    assert.equal(exitCode, 0);
+    assert.ok(findings.length > 0, 'findings should not be wiped by unknown suppressions');
+  });
+});

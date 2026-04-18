@@ -54,10 +54,10 @@
 |----|-------|----------|--------|--------|
 | M1 | **Implement auto-validate on save** | Feature | M | ✅ Done (PR 3a) |
 |    | `src/saveListener.ts` exports `createSaveListener({ shouldAutoValidate, validate, log, debounceMs })` — per-URI debounced, gated by setting, re-read on every save (not snapshotted). Wired in `activate()` and registered to `context.subscriptions`. Jest-covered: 9 tests for debounce coalescing, language-id gating, rapid-save deduplication, dispose semantics. | | | |
-| M2 | **Implement CodeActionProvider for quick fixes** | Feature | L | Pending |
-|    | Wire up `COMMON_FIXES` map to a registered CodeActionProvider so users get lightbulb suggestions. | | | |
-| M3 | **Fix regex to handle multi-line CDK constructs** | Bug | M | Pending |
-|    | Line 464 regex only matches single-line `new Foo(this, 'id', {...})`. Real CDK code spans multiple lines. Use AST parsing or multiline-aware regex. | | | |
+| M2 | **Implement CodeActionProvider for quick fixes** | Feature | L | ✅ Done (PR 3b) |
+|    | `src/providers/codeActionProvider.ts` registered for TS + JS. Curated `RULE_DOCS` map (17 exact rule ids + 5 prefix fallbacks) drives both "Apply suggested fix" (WorkspaceEdit inserts fix comment above flagged construct) and "Suppress this finding" actions. The pre-existing `COMMON_FIXES` stub was deleted — it was keyed by fake ids (`S3_BUCKET_ENCRYPTION`) that never matched real diagnostic codes. | | | |
+| M3 | **Fix regex to handle multi-line CDK constructs** | Bug | M | ✅ Done (PR 3b) |
+|    | Replaced with `src/resourceParser.ts` — a brace-balanced scanner that tracks strings, line/block comments, and template-literal `${...}` substitutions. Handles multi-line props objects, the two-argument form (no props), and strings that contain `}`. 13 Jest tests lock the behaviour. | | | |
 | M4 | **Fix test infrastructure** | Testing | L | ✅ Done (this branch) |
 |    | Jest: `vscode` module mocked via `moduleNameMapper` → `src/test/__mocks__/vscode.ts`; `setup.ts` no longer top-level-imports `vscode`. `createDiagnosticCollection` mock now returns a functional stub. Integration: `test:integration` script now compiles first then runs `node out/test/runTest.js`. Mocha suite loader rewritten as `export function run()` with `new Mocha(...).addFile(...).run(cb)` (was using browser API). All three test layers now green: node 12/12, jest 19/19, integration 2/2. | | | |
 | M5 | **Update CI workflow** | DevOps | S | Pending |
@@ -71,10 +71,10 @@
 
 | ID | Title | Category | Effort | Status |
 |----|-------|----------|--------|--------|
-| L1 | **Add HoverProvider for finding documentation** | Feature | M | Pending |
-|    | Show remediation guidance on hover over CDK-NAG diagnostics. | | | |
-| L2 | **Implement suppression support** | Feature | M | Pending |
-|    | ConfigManager defines `suppressions` array but it's never used. Allow users to suppress specific findings. | | | |
+| L1 | **Add HoverProvider for finding documentation** | Feature | M | ✅ Done (PR 3b) |
+|    | `src/providers/hoverProvider.ts` registered for TS + JS. Filters `vscode.languages.getDiagnostics(uri)` to CDK-NAG source containing the hover position, renders rule name + severity + description + remediation snippet (typescript code block) + link to upstream RULES.md. Curated 17 exact entries; uncurated ids fall back to prefix-level docs. | | | |
+| L2 | **Implement suppression support** | Feature | M | ✅ Done (PR 3b) |
+|    | `cdk-nag-validator.suppressFinding` command persists to `.vscode/cdk-nag-config.json` via new `ConfigManager.addSuppression`. Runner reads `suppressions` from input JSON and filters findings before emitting — supports both exact rule id (`AwsSolutions-S1`) and `ruleId:resourceId` tuple. Diagnostics for the suppressed rule are removed from the collection immediately so the lightbulb vanishes without waiting for the next validation. | | | |
 | L3 | **Replace sync fs calls with async** | Performance | S | ✅ Done (PR 3a) |
 |    | `runCdkNag` now uses `fs.promises.mkdtemp`, `fs.promises.writeFile`, `fs.promises.rm` instead of the `*Sync` variants so long validations do not block the extension host. | | | |
 | L4 | **Add progress indicator during validation** | UX | S | ✅ Done (PR 3a) |

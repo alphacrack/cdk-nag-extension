@@ -32,6 +32,12 @@ interface RunnerInput {
   rulePacks: string[];
   customRules: CustomRule[];
   workspacePath: string;
+  /**
+   * Rule IDs the user has chosen to suppress workspace-wide. Findings whose
+   * `id` matches an entry (exact match, or `ruleId:resourceId` form) are
+   * dropped before stdout is written.
+   */
+  suppressions?: string[];
 }
 
 interface Finding {
@@ -71,6 +77,7 @@ async function main(): Promise<void> {
 
   const input: RunnerInput = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
   const { templatePath, rulePacks, customRules, workspacePath } = input;
+  const suppressions = Array.isArray(input.suppressions) ? input.suppressions : [];
 
   const templateContent = fs.readFileSync(templatePath, 'utf8');
   const template = yaml.parse(templateContent);
@@ -241,9 +248,21 @@ async function main(): Promise<void> {
     }
   }
 
+  // Apply user-configured suppressions before emitting. A suppression entry
+  // may be either an exact rule ID ("AwsSolutions-S1" — matches every
+  // instance) or a `ruleId:resourceId` tuple for per-resource suppression.
+  const filteredFindings =
+    suppressions.length === 0
+      ? findings
+      : findings.filter(f => {
+          if (suppressions.includes(f.id)) return false;
+          if (suppressions.includes(`${f.id}:${f.resourceId}`)) return false;
+          return true;
+        });
+
   // Output is written to stdout as newline-terminated JSON so the parent
   // process can read it without any parsing ambiguity.
-  process.stdout.write(JSON.stringify(findings, null, 2) + '\n');
+  process.stdout.write(JSON.stringify(filteredFindings, null, 2) + '\n');
 }
 
 main().catch(err => {

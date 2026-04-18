@@ -13,7 +13,10 @@ Run [cdk-nag](https://github.com/cdklabs/cdk-nag) against your AWS CDK project f
 - 🛡️ **Multiple compliance standards** — `AwsSolutionsChecks`, `HIPAA.SecurityChecks`, `NIST.800-53.R4Checks`, `NIST.800-53.R5Checks`, `PCI.DSS.321Checks`, and `ServerlessChecks`. Any subset can be enabled via settings.
 - ⚙️ **Custom rules** — Add project-specific rules targeted at CloudFormation resource types. Conditions are evaluated in a sandboxed Node `vm` context with no access to `require` / `process` / globals, and a hard 500 ms timeout.
 - 🔍 **On-demand validation** — Command Palette commands to validate the current file or the full workspace.
-- 🎯 **Diagnostics integration** — Findings appear in the Problems panel, anchored to the matching resource declaration in your source when a single-line match is available.
+- 🎯 **Diagnostics integration** — Findings appear in the Problems panel, anchored to the matching resource declaration in your source. A brace-balanced multi-line parser handles constructors that span multiple lines or omit the third props argument.
+- 💡 **Quick-fix lightbulbs** — Curated fixes for the most common AWS Solutions rules (`S1`, `S2`, `S3`, `S10`, `EC23`, `EC27`, `IAM4`, `IAM5`, `L1`, `APIG1`, `APIG2`, `DDB3`, `RDS3`, `RDS6`, `CFR1`, `SNS2`, `SQS3`) are offered as one-click insertions above the flagged construct.
+- 📖 **Rule-doc hovers** — Hover any CDK-NAG diagnostic to see the rule name, description, severity, a remediation snippet, and a direct link to the upstream cdk-nag RULES.md entry.
+- 🙈 **Per-workspace suppressions** — "Suppress this finding" action persists the rule id to `.vscode/cdk-nag-config.json`; the runner filters the suppressed findings before they ever become diagnostics. Supports both exact rule ids (`AwsSolutions-S1`) and `ruleId:resourceId` tuples.
 - 🔒 **No shell execution** — The underlying runner is spawned with `shell: false`; all template / config data flows through a JSON input file, so there is no shell-injection surface.
 - 🗒️ **Dedicated Output channel** — Look for "CDK NAG" in the Output panel dropdown for structured diagnostic logs (respects your Log Level setting).
 
@@ -79,9 +82,10 @@ The following features are **planned but not yet wired up**. They are declared i
 |---|---|---|
 | Auto-validate on save | `cdkNagValidator.autoValidate` | ✅ Shipped (PR 3a) |
 | Progress notification + cancellation | — | ✅ Shipped (PR 3a) |
-| Quick-fix lightbulbs for common findings | `COMMON_FIXES` map | PR 3b |
-| Hover tooltips with rule docs | — | PR 3b |
-| Suppressions persisted to `.vscode/cdk-nag-config.json` | — | PR 3b |
+| Quick-fix lightbulbs for common findings | `CodeActionProvider` + curated `RULE_DOCS` | ✅ Shipped (PR 3b) |
+| Hover tooltips with rule docs | `HoverProvider` + curated `RULE_DOCS` | ✅ Shipped (PR 3b) |
+| Suppressions persisted to `.vscode/cdk-nag-config.json` | `cdk-nag-validator.suppressFinding` command | ✅ Shipped (PR 3b) |
+| Multi-line constructor anchoring (AST-grade parser) | — | ✅ Shipped (PR 3b) |
 | Copilot Chat participant (`@cdk-nag`) | `chatParticipants` | PR 5 |
 | Language Model Tools (`cdkNag_validateFile`, `cdkNag_explainRule`) | `languageModelTools` | PR 6 |
 | AI-suggested fixes (opt-in, scrubbed snippets) | `cdkNagValidator.enableAiSuggestions` | PR 7 |
@@ -91,8 +95,7 @@ See [BACKLOG.md](BACKLOG.md) for the full engineering backlog.
 ## ⚠️ Known Issues
 
 - **Languages** — only TypeScript and JavaScript CDK projects are supported. Python, Java, and .NET CDK apps are not currently validated.
-- **Inline suggestions** — the `cdkNagValidator.showInlineSuggestions` setting exists but is not yet consumed; quick-fixes land in PR 3b.
-- **Large templates** — diagnostics anchor to a single-line regex match of the construct; multi-line constructor blocks may not be anchored precisely. Tracked as M3 in BACKLOG.md; AST-based matching lands in PR 3b.
+- **Quick-fix coverage** — curated remediations ship for the most common `AwsSolutions` rules (see Features). Uncurated rule ids still produce diagnostics + hover docs + suppressions, but no lightbulb edit. AI-generated suggestions are opt-in and land in PR 7.
 - **Dependencies** — the extension requires `aws-cdk-lib` and `cdk-nag` to be installed in your workspace. A graceful install prompt lands in PR 8.
 
 ## 🛠️ Development

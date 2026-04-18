@@ -217,3 +217,56 @@ describe('ConfigManager.getCdkNagPackage', () => {
     expect(pkg.isCustom).toBe(true);
   });
 });
+
+describe('ConfigManager.addSuppression / getSuppressions', () => {
+  let workspace: string;
+
+  beforeEach(() => {
+    workspace = makeTempWorkspace();
+  });
+
+  afterEach(() => {
+    rmTree(workspace);
+  });
+
+  it('adds a rule id to an empty suppressions list', async () => {
+    const added = await ConfigManager.addSuppression(workspace, 'AwsSolutions-S1');
+    expect(added).toBe(true);
+    const list = await ConfigManager.getSuppressions(workspace);
+    expect(list).toEqual(['AwsSolutions-S1']);
+  });
+
+  it('is idempotent — adding the same rule twice returns false on the second call', async () => {
+    await ConfigManager.addSuppression(workspace, 'AwsSolutions-S1');
+    const second = await ConfigManager.addSuppression(workspace, 'AwsSolutions-S1');
+    expect(second).toBe(false);
+    const list = await ConfigManager.getSuppressions(workspace);
+    expect(list).toEqual(['AwsSolutions-S1']);
+  });
+
+  it('appends without clobbering an existing suppressions list', async () => {
+    await ConfigManager.saveConfig(workspace, {
+      cdkNagPackage: { name: 'cdk-nag', isCustom: false },
+      useProjectCdkNag: true,
+      defaultRules: {},
+      customRules: [],
+      suppressions: ['AwsSolutions-EC23'],
+    });
+    const added = await ConfigManager.addSuppression(workspace, 'AwsSolutions-S1');
+    expect(added).toBe(true);
+    const list = await ConfigManager.getSuppressions(workspace);
+    expect(list).toEqual(['AwsSolutions-EC23', 'AwsSolutions-S1']);
+  });
+
+  it('getSuppressions returns [] when no config file exists', async () => {
+    const list = await ConfigManager.getSuppressions(workspace);
+    expect(list).toEqual([]);
+  });
+
+  it('persists suppressions in the on-disk JSON file', async () => {
+    await ConfigManager.addSuppression(workspace, 'AwsSolutions-S1');
+    const raw = fs.readFileSync(path.join(workspace, '.vscode', 'cdk-nag-config.json'), 'utf8');
+    const parsed = JSON.parse(raw);
+    expect(parsed.suppressions).toEqual(['AwsSolutions-S1']);
+  });
+});
