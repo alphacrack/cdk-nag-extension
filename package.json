@@ -1,19 +1,54 @@
 {
   "name": "cdk-nag-validator",
   "displayName": "CDK NAG Validator",
-  "description": "VS Code extension for CDK-NAG validation with inline suggestions",
+  "description": "Run AWS cdk-nag rule packs against your CDK project from inside VS Code — AwsSolutions, HIPAA, NIST, PCI DSS, Serverless — and see findings in the Problems panel.",
   "version": "0.0.1",
   "publisher": "alphacrack",
   "private": false,
   "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#232F3E",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/alphacrack/cdk-nag-extension"
   },
+  "bugs": {
+    "url": "https://github.com/alphacrack/cdk-nag-extension/issues"
+  },
+  "homepage": "https://github.com/alphacrack/cdk-nag-extension#readme",
+  "keywords": [
+    "aws",
+    "cdk",
+    "cdk-nag",
+    "cloudformation",
+    "security",
+    "compliance",
+    "hipaa",
+    "nist",
+    "pci-dss",
+    "serverless",
+    "linter"
+  ],
+  "badges": [
+    {
+      "url": "https://github.com/alphacrack/cdk-nag-extension/actions/workflows/ci.yml/badge.svg",
+      "href": "https://github.com/alphacrack/cdk-nag-extension/actions/workflows/ci.yml",
+      "description": "CI status"
+    },
+    {
+      "url": "https://img.shields.io/github/license/alphacrack/cdk-nag-extension.svg",
+      "href": "https://github.com/alphacrack/cdk-nag-extension/blob/main/LICENSE",
+      "description": "License"
+    }
+  ],
   "engines": {
     "vscode": "^1.96.2"
   },
   "categories": [
+    "Linters",
     "Other"
   ],
   "activationEvents": [
@@ -157,10 +192,11 @@
     "@types/jest": "^30.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.6.0",
-    "@types/vscode": "^1.116.0",
+    "@types/vscode": "~1.96.0",
     "@typescript-eslint/eslint-plugin": "^5.30.0",
     "@typescript-eslint/parser": "^5.30.0",
     "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.2.1",
     "eslint": "^8.13.0",
     "eslint-config-prettier": "^8.10.0",
     "eslint-plugin-prettier": "^4.2.1",
@@ -172,8 +208,7 @@
     "rimraf": "^6.1.3",
     "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
-    "typescript": "^4.7.2",
-    "vsce": "^2.15.0"
+    "typescript": "^4.7.2"
   },
   "dependencies": {
     "aws-cdk-lib": "^2.250.0",

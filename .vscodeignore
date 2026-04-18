@@ -1,0 +1,74 @@
+# Keep the published .vsix lean — only ship what the extension host needs.
+# Everything NOT listed here is bundled into the package.
+
+# Integration-test VS Code binary — absolutely must be excluded
+.vscode-test/**
+.vscode-test
+.vscode/**
+
+# Source — we ship compiled out/ only
+src/**
+tsconfig.json
+jest.config.js
+.eslintrc.js
+.prettierrc
+
+# Tests & fixtures
+**/*.test.ts
+**/*.test.js
+**/*.test.mjs
+out/test/**
+sample/**
+
+# Dev tooling
+.github/**
+.husky/**
+.claude/**
+skills/**
+standups/**
+
+# Repo housekeeping docs — README, CHANGELOG, LICENSE are kept
+BACKLOG.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+SECURITY.md
+eval-review-iteration-1.html
+
+# Source maps & TS artifacts not needed at runtime
+**/*.map
+**/*.ts
+**/*.d.ts
+
+# Repo-only metadata
+.gitignore
+.gitleaks.toml
+.gitattributes
+
+# Heavy deps that are resolved from the USER'S workspace at runtime
+# (the runner uses require.resolve with `{ paths: [workspacePath] }`), so
+# bundling them in the VSIX buys nothing and inflates size by ~70MB.
+# PR 8 formalises this by migrating to peerDependencies.
+node_modules/aws-cdk-lib/**
+node_modules/cdk-nag/**
+node_modules/constructs/**
+node_modules/@aws-cdk/**
+node_modules/**/*.zip
+
+# Trim common dead weight from remaining node_modules deps
+node_modules/**/*.md
+node_modules/**/*.ts
+node_modules/**/test/**
+node_modules/**/tests/**
+node_modules/**/__tests__/**
+node_modules/**/*.map
+node_modules/**/docs/**
+node_modules/**/.github/**
+node_modules/**/.eslintrc*
+node_modules/**/.prettierrc*
+node_modules/**/CHANGELOG*
+node_modules/**/HISTORY*
+node_modules/**/LICENSE*
+node_modules/**/license*
+node_modules/**/README*
+node_modules/**/readme*
+

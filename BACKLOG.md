@@ -41,8 +41,8 @@
 |    | `extension.ts` now uses `fs.mkdtempSync(path.join(os.tmpdir(), 'cdk-nag-'))` per invocation. Runner uses its own `cdk-nag-runner-*` mkdtemp per pack. | | | |
 | H6 | **Stop auto-installing packages in user workspace** | Bug | M | ✅ Done (commit 5d0388e) |
 |    | `npm install` is now opt-in via the `cdkNagValidator.autoInstall` setting (default `false`). Verified by `autoInstall default value is false` unit test. | | | |
-| H7 | **Fix README: remove false feature claims** | Docs | M | Pending |
-|    | Remove claims for: real-time validation (not implemented), Python/Java support (TS/JS only), quick fixes (no CodeActionProvider), detailed documentation/hover (no HoverProvider), auto-validate on save (no onDidSaveTextDocument listener). Fix badge URLs (`cdk-nag-validator` → `cdk-nag-extension`). | | | |
+| H7 | **Fix README: remove false feature claims** | Docs | M | ✅ Done (PR 2) |
+|    | README rewritten: dropped unsupported-language claims, marketplace badges replaced with actionable CI/license/engine badges, install instructions corrected (extension not yet on Marketplace), added explicit "Roadmap" and "Known Issues" sections naming which claimed features are actually shipped vs deferred to PR 3a/3b/5/6/7. | | | |
 
 ---
 
@@ -62,10 +62,10 @@
 |    | Jest: `vscode` module mocked via `moduleNameMapper` → `src/test/__mocks__/vscode.ts`; `setup.ts` no longer top-level-imports `vscode`. `createDiagnosticCollection` mock now returns a functional stub. Integration: `test:integration` script now compiles first then runs `node out/test/runTest.js`. Mocha suite loader rewritten as `export function run()` with `new Mocha(...).addFile(...).run(cb)` (was using browser API). All three test layers now green: node 12/12, jest 19/19, integration 2/2. | | | |
 | M5 | **Update CI workflow** | DevOps | S | Pending |
 |    | Update Node matrix to 18.x, 20.x, 22.x (14/16 are EOL). Update actions/checkout and actions/setup-node to v4. | | | |
-| M6 | **Update outdated dev dependencies** | Deps | S | Pending |
-|    | `@types/vscode` → match engine ^1.96.2. `@types/node` → ^20.x. `typescript` → 5.x. `vsce` → `@vscode/vsce`. | | | |
-| M7 | **Add extension icon** | Publishing | S | Pending |
-|    | Missing 128x128 PNG icon required for VS Code Marketplace. Design and add to package.json. | | | |
+| M6 | **Update outdated dev dependencies** | Deps | S | Partial (PR 2) |
+|    | `@types/vscode` now pinned `~1.96.0` (matches `engines.vscode ^1.96.2`). `vsce@^2.15.0` → `@vscode/vsce@^3.2.1`. `@types/node → ^20.x` and `typescript → 5.x` still pending (deferred to PR 8). | | | |
+| M7 | **Add extension icon** | Publishing | S | ✅ Done (PR 2) |
+|    | 128×128 `media/icon.png` added (AWS-orange shield-shape on navy). `package.json` now sets `icon`, `galleryBanner`, `badges`, `keywords`, `bugs`, `homepage`, and the `Linters` category. `.vscodeignore` added — VSIX shrinks from 48.9 MB → ~214 KB by excluding heavy AWS deps (resolved from user workspace at runtime). | | | |
 
 ### LOW — Nice to have
 
@@ -92,6 +92,6 @@
 
 - **License**: MIT — fully compliant. All deps compatible (Apache-2.0, ISC, BSD-2-Clause, MIT).
 - **No NOTICE file needed.**
-- **Marketplace readiness**: 90% — missing icon only.
-- **aws-cdk-lib as production dep**: Should be peerDependency (200+ MB bloat in extension package).
-- **`vsce` package**: Deprecated, replace with `@vscode/vsce`.
+- **Marketplace readiness**: icon + metadata + slim VSIX landed in PR 2. Remaining: Marketplace publish wiring is PR 4's release workflow.
+- **aws-cdk-lib as production dep**: Stripped from the `.vsix` via `.vscodeignore` in PR 2 (resolved from the user's workspace at runtime). Formal `peerDependencies` migration deferred to PR 8.
+- **`vsce` package**: Migrated to `@vscode/vsce@^3.2.1` in PR 2.
