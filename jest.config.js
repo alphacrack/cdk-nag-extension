@@ -2,9 +2,11 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
-  // Include only the Jest-based unit tests.
-  // The suite/ directory contains Mocha integration tests run via `npm run test:integration`.
-  testMatch: ['<rootDir>/src/test/*.test.ts', '<rootDir>/src/**/__tests__/**/*.ts'],
+  // Include all Jest-based unit tests under src/test/, including nested
+  // directories (e.g. src/test/providers/, src/test/chat/). The suite/
+  // directory is excluded below — it holds Mocha integration tests run via
+  // `npm run test:integration`.
+  testMatch: ['<rootDir>/src/test/**/*.test.ts', '<rootDir>/src/**/__tests__/**/*.ts'],
   testPathIgnorePatterns: [
     '/node_modules/',
     '<rootDir>/src/test/suite/',  // Mocha tests — use `npm run test:integration`

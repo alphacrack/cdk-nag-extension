@@ -24,6 +24,20 @@ export const window = {
     onDidChangeLogLevel: jest.fn(),
     name: 'mock',
   })),
+  // Tests override `activeTextEditor` per-case by assigning to the property.
+  activeTextEditor: undefined as unknown,
+};
+
+// Chat API mock — `vscode.chat` was finalized in 1.97. Tests can override
+// `createChatParticipant.mockReturnValue(...)` per-case; the chat participant
+// module also probes for `typeof chat.createChatParticipant === 'function'` so
+// tests can force the "host without chat API" branch by setting
+// `(vscode as any).chat = undefined`.
+export const chat = {
+  createChatParticipant: jest.fn((_id: string, _handler: unknown) => ({
+    iconPath: undefined,
+    dispose: jest.fn(),
+  })),
 };
 
 export const workspace = {
