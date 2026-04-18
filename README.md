@@ -19,7 +19,8 @@ Run [cdk-nag](https://github.com/cdklabs/cdk-nag) against your AWS CDK project f
 - 🙈 **Per-workspace suppressions** — "Suppress this finding" action persists the rule id to `.vscode/cdk-nag-config.json`; the runner filters the suppressed findings before they ever become diagnostics. Supports both exact rule ids (`AwsSolutions-S1`) and `ruleId:resourceId` tuples.
 - 🔒 **No shell execution** — The underlying runner is spawned with `shell: false`; all template / config data flows through a JSON input file, so there is no shell-injection surface.
 - 🗒️ **Dedicated Output channel** — Look for "CDK NAG" in the Output panel dropdown for structured diagnostic logs (respects your Log Level setting).
-- 🤖 **Copilot Chat participant (`@cdk-nag`)** — Ask about findings directly in the VS Code Chat view. The participant streams the current file's CDK-NAG diagnostics and rule metadata back to you. Ask-only in this release; natural-language rule explanations and Language Model Tool calls ship in the next PR.
+- 🤖 **Copilot Chat participant (`@cdk-nag`)** — Ask about findings directly in the VS Code Chat view. Natural-language intent routing: "validate the current file", "scan my workspace", or "what does `AwsSolutions-S1` check?" all resolve to the matching Language Model Tool. Falls back to a curated diagnostic preview when the Language Model Tool API isn't available on the host.
+- 🧰 **Language Model Tools** — `cdkNag_validateFile` and `cdkNag_explainRule` are registered via `vscode.lm.registerTool` and declared in `package.json` under `contributes.languageModelTools`. Copilot **agent mode** can invoke them directly with `#cdkNagValidateFile` / `#cdkNagExplainRule` during multi-step tasks, giving Copilot a reliable path to run cdk-nag and surface rule docs without hallucinating. The tools run the same validation pipeline as the commands (synth → pack → findings) and honour `CancellationToken` so the runner is SIGTERMed when Copilot cancels the invocation.
 
 ## 🚀 Installation
 
@@ -75,6 +76,29 @@ Available rule packs: `AwsSolutionsChecks`, `HIPAA.SecurityChecks`, `NIST.800-53
 
 Open **View → Output** and pick `CDK NAG` from the dropdown to see structured logs for every validation run (useful when diagnostics are missing or the runner fails).
 
+### AI integration (Copilot Chat + agent mode)
+
+Two surfaces drive the extension from AI tooling, both built on the finalized VS Code Language Model API (1.97+):
+
+**1. `@cdk-nag` chat participant** — open the Chat view, type `@cdk-nag`, and ask:
+
+| Prompt | Routes to |
+|---|---|
+| `@cdk-nag validate the current file` | `cdkNag_validateFile` on the active editor |
+| `@cdk-nag scan sample/insecure-stack.ts` | `cdkNag_validateFile` on the supplied path |
+| `@cdk-nag explain AwsSolutions-S1` | `cdkNag_explainRule` with the extracted rule id |
+| `@cdk-nag what does HIPAA.Security-S3BucketVersioningEnabled check for?` | `cdkNag_explainRule` |
+| `@cdk-nag hello` | Ask-only fallback (guidance + diagnostic preview) |
+
+Intent detection is regex-based and deliberately narrow — the participant should feel predictable. On hosts without `vscode.lm.invokeTool`, the explain intent falls back to a local `ruleDocs` lookup so users still get an answer.
+
+**2. Copilot agent mode tool references** — the tools are declared with `canBeReferencedInPrompt: true` and `toolReferenceName`, so agent-mode Copilot can call them directly:
+
+- `#cdkNagValidateFile` — accepts `{ uri?: string, rulePacks?: string[] }`. Omit `uri` to validate the active editor's workspace; pass a relative or absolute path to narrow the report to a specific file. Runs the full synth → rule-pack → findings pipeline.
+- `#cdkNagExplainRule` — accepts `{ ruleId: string }`. Returns the curated rule name, description, severity, remediation snippet, and upstream RULES.md link.
+
+Both tools gate side-effects through `prepareInvocation.confirmationMessages`, so agent mode asks the user before synthesising the CDK app. Cancellation is honoured end-to-end — the `CancellationToken` is threaded into the runner child process, which receives `SIGTERM` if Copilot abandons the invocation.
+
 ## 🧭 Roadmap
 
 The following features are **planned but not yet wired up**. They are declared in `package.json` or mentioned in the codebase so the contract is stable, but they are shipped in upcoming PRs:
@@ -88,7 +112,8 @@ The following features are **planned but not yet wired up**. They are declared i
 | Suppressions persisted to `.vscode/cdk-nag-config.json` | `cdk-nag-validator.suppressFinding` command | ✅ Shipped (PR 3b) |
 | Multi-line constructor anchoring (AST-grade parser) | — | ✅ Shipped (PR 3b) |
 | Copilot Chat participant (`@cdk-nag`) — ask-only | `chatParticipants` | ✅ Shipped (PR 5) |
-| Language Model Tools (`cdkNag_validateFile`, `cdkNag_explainRule`) | `languageModelTools` | PR 6 |
+| Language Model Tools (`cdkNag_validateFile`, `cdkNag_explainRule`) | `languageModelTools` | ✅ Shipped (PR 6) |
+| Natural-language intent routing in the chat participant | — | ✅ Shipped (PR 6) |
 | AI-suggested fixes (opt-in, scrubbed snippets) | `cdkNagValidator.enableAiSuggestions` | PR 7 |
 
 See [BACKLOG.md](BACKLOG.md) for the full engineering backlog.

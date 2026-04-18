@@ -96,6 +96,73 @@
         "isSticky": true
       }
     ],
+    "languageModelTools": [
+      {
+        "name": "cdkNag_validateFile",
+        "displayName": "Validate CDK / CloudFormation file with cdk-nag",
+        "modelDescription": "Runs the configured AWS cdk-nag rule packs against a CDK project file (TypeScript / JavaScript) or the workspace and returns a summary of findings. Use this when the user asks to validate, scan, or security-check a CDK / CloudFormation file. Input accepts a workspace-relative or absolute file path; omit to scope to the active editor.",
+        "userDescription": "Validates a CDK file against the configured cdk-nag rule packs and returns findings.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "cdkNagValidateFile",
+        "tags": [
+          "aws",
+          "cdk",
+          "cdk-nag",
+          "security",
+          "compliance"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string",
+              "description": "Absolute path or workspace-relative path to the CDK file to validate. If omitted, the tool falls back to the active editor's file."
+            },
+            "rulePacks": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "AwsSolutionsChecks",
+                  "HIPAA.SecurityChecks",
+                  "NIST.800-53.R4Checks",
+                  "NIST.800-53.R5Checks",
+                  "PCI.DSS.321Checks",
+                  "ServerlessChecks"
+                ]
+              },
+              "description": "Optional override — rule packs to apply for this invocation. Defaults to the user's cdkNagValidator.enabledRulePacks setting."
+            }
+          }
+        }
+      },
+      {
+        "name": "cdkNag_explainRule",
+        "displayName": "Explain a cdk-nag rule",
+        "modelDescription": "Returns curated metadata (rule name, severity, description, remediation snippet, documentation URL) for a cdk-nag rule id such as AwsSolutions-S1 or HIPAA.Security-S3BucketVersioningEnabled. Use when the user asks what a rule does, why something is flagged, or how to fix a specific rule id.",
+        "userDescription": "Explains what a cdk-nag rule checks and how to remediate it.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "cdkNagExplainRule",
+        "tags": [
+          "aws",
+          "cdk",
+          "cdk-nag",
+          "docs"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "ruleId": {
+              "type": "string",
+              "description": "The cdk-nag rule identifier (e.g. AwsSolutions-S1, AwsSolutions-EC23, HIPAA.Security-S3BucketVersioningEnabled)."
+            }
+          },
+          "required": [
+            "ruleId"
+          ]
+        }
+      }
+    ],
     "configuration": {
       "title": "CDK NAG Validator",
       "properties": {

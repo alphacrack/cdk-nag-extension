@@ -40,6 +40,11 @@ export const chat = {
   })),
 };
 
+// `LanguageModelTextPart` and `LanguageModelToolResult` are declared lower
+// in this file; the `lm.invokeTool` mock that returns an instance of
+// `LanguageModelToolResult` has to resolve the class at call-time, so we
+// declare the `lm` export AFTER the classes near the bottom of the file.
+
 export const workspace = {
   getConfiguration: jest.fn(),
   onDidChangeConfiguration: jest.fn(),
@@ -181,3 +186,34 @@ export const commands = {
 };
 
 export const ExtensionContext = jest.fn();
+
+// ── Language Model Tool result shapes ──
+// Real class implementations of `LanguageModelTextPart` and
+// `LanguageModelToolResult` so tests can construct them and the tool code
+// under test can `new` them directly. The chat participant's
+// `extractToolText` helper also walks `result.content` — keeping the class
+// shape identical to @types/vscode avoids needing a separate runtime shim.
+export class LanguageModelTextPart {
+  constructor(public value: string) {}
+}
+
+export class LanguageModelPromptTsxPart {
+  constructor(public value: unknown) {}
+}
+
+export class LanguageModelToolResult {
+  constructor(public content: Array<LanguageModelTextPart | LanguageModelPromptTsxPart>) {}
+}
+
+// Language Model API mock — `vscode.lm` was finalized in 1.97 for tool
+// registration and invocation. Tests override `registerTool` /
+// `invokeTool` via `.mockReturnValue(...)` per-case and flip the whole
+// namespace to `undefined` to exercise the "no LM tool API" fallback.
+export const lm = {
+  registerTool: jest.fn((_name: string, _tool: unknown) => ({ dispose: jest.fn() })),
+  invokeTool: jest.fn(
+    async (_name: string, _options: unknown, _token?: unknown) =>
+      new LanguageModelToolResult([new LanguageModelTextPart('mock tool result')])
+  ),
+  tools: [] as unknown[],
+};
