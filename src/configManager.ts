@@ -172,4 +172,23 @@ export class ConfigManager {
     const config = await this.getConfig(workspaceRoot);
     return config.cdkNagPackage;
   }
+
+  /**
+   * Append a rule ID to the workspace-level suppressions list. Idempotent —
+   * adding a rule that is already suppressed is a no-op. Returns `true` if
+   * the config file was written (rule wasn't already present), `false` otherwise.
+   */
+  public static async addSuppression(workspaceRoot: string, ruleId: string): Promise<boolean> {
+    const config = await this.getConfig(workspaceRoot);
+    if (config.suppressions.includes(ruleId)) return false;
+    config.suppressions = [...config.suppressions, ruleId];
+    await this.saveConfig(workspaceRoot, config);
+    return true;
+  }
+
+  /** Read the current suppressions list (never throws — falls back to `[]`). */
+  public static async getSuppressions(workspaceRoot: string): Promise<string[]> {
+    const config = await this.getConfig(workspaceRoot);
+    return Array.isArray(config.suppressions) ? config.suppressions : [];
+  }
 }

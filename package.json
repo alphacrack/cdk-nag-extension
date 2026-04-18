@@ -73,8 +73,20 @@
       {
         "command": "cdk-nag-validator.configureRules",
         "title": "CDK NAG: Configure Rules"
+      },
+      {
+        "command": "cdk-nag-validator.suppressFinding",
+        "title": "CDK NAG: Suppress Finding for Workspace"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "cdk-nag-validator.suppressFinding",
+          "when": "false"
+        }
+      ]
+    },
     "configuration": {
       "title": "CDK NAG Validator",
       "properties": {

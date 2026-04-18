@@ -20,6 +20,13 @@ import * as os from 'os';
 import { ConfigManager } from './configManager';
 import { getOutputChannel, disposeOutputChannel } from './outputChannel';
 import { createSaveListener } from './saveListener';
+import { parseResourceDefinitions } from './resourceParser';
+import {
+  CdkNagCodeActionProvider,
+  CDK_NAG_DIAGNOSTIC_SOURCE,
+  SUPPRESS_COMMAND_ID,
+} from './providers/codeActionProvider';
+import { CdkNagHoverProvider } from './providers/hoverProvider';
 
 const execAsync = promisify(exec);
 
@@ -46,22 +53,10 @@ const AVAILABLE_RULE_PACKS = [
   'ServerlessChecks',
 ];
 
-// Static remediation hints keyed by cdk-nag rule ID prefix. Wired into a
-// CodeActionProvider in PR 3b (issue tracked in BACKLOG: M2). Kept here so
-// the provider has a single source of truth to import.
-export const COMMON_FIXES: { [key: string]: string } = {
-  S3_BUCKET_ENCRYPTION:
-    'Add encryption configuration: new s3.Bucket(this, "Bucket", { encryption: s3.BucketEncryption.S3_MANAGED })',
-  S3_BUCKET_VERSIONING: 'Enable versioning: new s3.Bucket(this, "Bucket", { versioned: true })',
-  S3_BUCKET_LOGGING:
-    'Enable access logging: new s3.Bucket(this, "Bucket", { serverAccessLogsBucket: loggingBucket })',
-  DYNAMODB_TABLE_ENCRYPTION:
-    'Enable encryption: new dynamodb.Table(this, "Table", { encryption: dynamodb.TableEncryption.AWS_MANAGED })',
-  LAMBDA_FUNCTION_LOGGING:
-    'Enable logging: new lambda.Function(this, "Function", { logRetention: logs.RetentionDays.ONE_WEEK })',
-  API_GATEWAY_LOGGING:
-    'Enable logging: new apigateway.RestApi(this, "Api", { deployOptions: { loggingLevel: apigateway.MethodLoggingLevel.INFO } })',
-};
+// Remediation hints + rule documentation now live in `src/ruleDocs.ts`,
+// keyed by the actual cdk-nag rule IDs (e.g. `AwsSolutions-S1`). The old
+// made-up-category table never matched real diagnostic.code values, so
+// quick-fixes were silently unreachable. See `lookupRuleDoc` / `lookupRuleFix`.
 
 // ── Configuration accessors ─────────────────────────────────────────────────
 // All settings live under the `cdkNagValidator.*` namespace in settings.json.
@@ -330,12 +325,26 @@ async function runCdkNag(
   const templatePath = path.join(tempDir, 'template.yaml');
   await fs.promises.writeFile(templatePath, synthOutput);
 
+  // Read workspace-level suppressions so the runner can filter findings
+  // before emitting them. Never throws — missing/empty is the happy path.
+  let suppressions: string[] = [];
+  try {
+    suppressions = await ConfigManager.getSuppressions(workspacePath);
+  } catch (err) {
+    channel.warn(
+      `Failed to read suppressions — proceeding without: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+
   // Build the structured input for the runner — pure JSON, no shell escaping.
   const runnerInput = {
     templatePath,
     rulePacks,
     customRules,
     workspacePath,
+    suppressions,
   };
   const inputPath = path.join(tempDir, 'runner-input.json');
   await fs.promises.writeFile(inputPath, JSON.stringify(runnerInput, null, 2));
@@ -360,10 +369,11 @@ async function runCdkNag(
 }
 
 // ── Finding → source-location mapping ───────────────────────────────────────
-// Walks the document text, finds `new XxxCtor(this, 'id', {…})` constructs,
-// and attaches the finding's message to the matching construct. Current regex
-// only handles single-line constructs; multi-line support is tracked as M3 in
-// the BACKLOG and fixed in PR 3b.
+// Uses `parseResourceDefinitions` (multi-line, nested-brace aware) to locate
+// `new TypeName(this, 'id'[, {...}])` constructs and attach each finding's
+// message to the matching construct. Constructs with no options object are
+// also matched so e.g. `new Bucket(this, 'UnencryptedBucket')` still gets a
+// diagnostic rather than being silently dropped.
 async function mapFindingsToSourceLocations(
   document: vscode.TextDocument,
   findings: Array<{
@@ -378,58 +388,54 @@ async function mapFindingsToSourceLocations(
   const diagnostics: vscode.Diagnostic[] = [];
   const documentText = document.getText();
 
+  // Resource ids can repeat in practice (e.g. "Role" across multiple stacks
+  // in one file), so store a list per id and attach each matching finding.
   const resourceDefinitions = new Map<
     string,
-    { range: vscode.Range; config: string; type: string }
+    Array<{ range: vscode.Range; config: string | null; type: string }>
   >();
 
-  const resourceRegex = /new\s+([\w.]+)\s*\(\s*this\s*,\s*['"]([^'"]+)['"]\s*,\s*({[^}]+})/g;
-  let match;
-  while ((match = resourceRegex.exec(documentText)) !== null) {
-    const resourceType = match[1];
-    const resourceId = match[2];
-    const config = match[3];
-    const startPos = document.positionAt(match.index);
-    const endPos = document.positionAt(match.index + match[0].length);
-
-    resourceDefinitions.set(resourceId, {
-      range: new vscode.Range(startPos, endPos),
-      config,
-      type: resourceType,
-    });
+  for (const def of parseResourceDefinitions(documentText)) {
+    const range = new vscode.Range(document.positionAt(def.start), document.positionAt(def.end));
+    const existing = resourceDefinitions.get(def.id) ?? [];
+    existing.push({ range, config: def.config, type: def.type });
+    resourceDefinitions.set(def.id, existing);
   }
 
-  channel.debug(`Found ${resourceDefinitions.size} resource definition(s) in ${document.fileName}`);
+  channel.debug(`Found ${resourceDefinitions.size} unique resource id(s) in ${document.fileName}`);
 
   for (const finding of findings) {
     let foundMatch = false;
-    for (const [resourceId, resourceDef] of resourceDefinitions.entries()) {
-      // Match by prefix — cdk-nag reports resourceId with an appended hash suffix.
+    for (const [resourceId, defs] of resourceDefinitions.entries()) {
+      // cdk-nag sometimes appends a hash to the resource id, so match by prefix.
       if (!finding.resourceId.startsWith(resourceId)) continue;
       foundMatch = true;
 
-      // Special-case: for S3 encryption findings, skip diagnostics if the
-      // construct config already has encryption set (false positive guard).
-      if (finding.id === 'S3_BUCKET_ENCRYPTION' && resourceDef.type.includes('Bucket')) {
-        const config = resourceDef.config;
-        const hasEncryption =
-          config.includes('encryption:') ||
-          config.includes('serverSideEncryptionConfiguration:') ||
-          config.includes('encryptionConfiguration:');
-        if (hasEncryption) {
+      for (const resourceDef of defs) {
+        // False-positive guard: S3 encryption findings on a construct whose
+        // options already have an encryption key. We only have confidence in
+        // this check when a config was actually parsed; skip otherwise.
+        if (
+          /S3Bucket.*Encryption/i.test(finding.id) &&
+          resourceDef.type.includes('Bucket') &&
+          resourceDef.config &&
+          (resourceDef.config.includes('encryption:') ||
+            resourceDef.config.includes('serverSideEncryptionConfiguration:') ||
+            resourceDef.config.includes('encryptionConfiguration:'))
+        ) {
           channel.debug(`Skipping already-encrypted bucket: ${resourceId}`);
           continue;
         }
-      }
 
-      const diagnostic = new vscode.Diagnostic(
-        resourceDef.range,
-        `${finding.name}: ${finding.description}`,
-        vscode.DiagnosticSeverity.Error
-      );
-      diagnostic.source = 'CDK-NAG';
-      diagnostic.code = finding.id;
-      diagnostics.push(diagnostic);
+        const diagnostic = new vscode.Diagnostic(
+          resourceDef.range,
+          `${finding.name}: ${finding.description}`,
+          diagnosticSeverity(finding.level)
+        );
+        diagnostic.source = CDK_NAG_DIAGNOSTIC_SOURCE;
+        diagnostic.code = finding.id;
+        diagnostics.push(diagnostic);
+      }
     }
 
     if (!foundMatch) {
@@ -438,6 +444,17 @@ async function mapFindingsToSourceLocations(
   }
 
   return diagnostics;
+}
+
+function diagnosticSeverity(level: string): vscode.DiagnosticSeverity {
+  switch (level.toUpperCase()) {
+    case 'ERROR':
+      return vscode.DiagnosticSeverity.Error;
+    case 'WARNING':
+      return vscode.DiagnosticSeverity.Warning;
+    default:
+      return vscode.DiagnosticSeverity.Information;
+  }
 }
 
 // Validate a file
@@ -641,6 +658,77 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     })
   );
+
+  // Suppress-finding command — invoked from the CodeActionProvider's
+  // "Suppress this finding" quick-fix. Writes the rule ID to
+  // `.vscode/cdk-nag-config.json` so the runner filters it on future runs.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      SUPPRESS_COMMAND_ID,
+      async (payload?: { ruleId?: string; uri?: string; message?: string }) => {
+        try {
+          const ruleId = payload?.ruleId;
+          if (!ruleId) {
+            void vscode.window.showErrorMessage('CDK NAG: missing rule id — cannot suppress.');
+            return;
+          }
+          const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+          if (!workspaceFolder) {
+            void vscode.window.showErrorMessage(
+              'CDK NAG: no workspace folder — cannot persist suppression.'
+            );
+            return;
+          }
+          const added = await ConfigManager.addSuppression(workspaceFolder.uri.fsPath, ruleId);
+          if (added) {
+            channel.info(`Suppressed rule ${ruleId} for ${workspaceFolder.name}`);
+            void vscode.window.showInformationMessage(
+              `CDK NAG: suppressed "${ruleId}" for this workspace. Remove it from .vscode/cdk-nag-config.json to re-enable.`
+            );
+            // Drop the diagnostic immediately from the current document so the
+            // user sees the effect without re-running validation.
+            if (payload?.uri) {
+              try {
+                const uri = vscode.Uri.parse(payload.uri);
+                const remaining = vscode.languages
+                  .getDiagnostics(uri)
+                  .filter(d => !(d.source === CDK_NAG_DIAGNOSTIC_SOURCE && d.code === ruleId));
+                diagnosticCollection.set(uri, remaining);
+              } catch {
+                // Non-fatal — next validation run will pick up the change.
+              }
+            }
+          } else {
+            void vscode.window.showInformationMessage(
+              `CDK NAG: "${ruleId}" was already suppressed.`
+            );
+          }
+        } catch (err) {
+          channel.error(
+            `Failed to suppress finding: ${err instanceof Error ? err.message : String(err)}`
+          );
+          void vscode.window.showErrorMessage(
+            `CDK NAG: failed to suppress finding: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      }
+    )
+  );
+
+  // Register CodeAction + Hover providers for TS/JS. The providers are
+  // stateless, so a single instance of each is reused across documents.
+  const codeActionProvider = new CdkNagCodeActionProvider();
+  const hoverProvider = new CdkNagHoverProvider();
+  for (const language of ['typescript', 'javascript']) {
+    context.subscriptions.push(
+      vscode.languages.registerCodeActionsProvider({ language }, codeActionProvider, {
+        providedCodeActionKinds: CdkNagCodeActionProvider.providedCodeActionKinds,
+      })
+    );
+    context.subscriptions.push(vscode.languages.registerHoverProvider({ language }, hoverProvider));
+  }
 
   // Clear diagnostics when the user starts editing — they're no longer valid
   // for the unsaved version of the document.
