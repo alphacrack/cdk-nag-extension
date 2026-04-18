@@ -351,3 +351,67 @@ describe('cdkNagRunner — error handling', () => {
     }
   });
 });
+
+describe('cdkNagRunner — cancellation (SIGTERM)', () => {
+  // PR 3a wires vscode.CancellationToken to kill the runner child process
+  // with SIGTERM. This tests the raw contract: when SIGTERM is delivered to
+  // an in-flight runner, it exits promptly and does not leave the parent
+  // hanging. The extension maps this non-zero exit to ValidationCancelledError.
+  test('runner exits promptly when sent SIGTERM mid-execution', async () => {
+    const workDir = mkdtempSync(path.join(tmpdir(), 'cdk-nag-cancel-'));
+    const inputPath = path.join(workDir, 'input.json');
+    writeFileSync(
+      inputPath,
+      JSON.stringify({
+        templatePath: templatePath('s3-insecure.yaml'),
+        rulePacks: ['AwsSolutionsChecks'],
+        customRules: [],
+        workspacePath: REPO_ROOT,
+      })
+    );
+
+    try {
+      const { spawn } = await import('node:child_process');
+      const child = spawn(process.execPath, [RUNNER, inputPath], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      const exitPromise = new Promise((resolve, reject) => {
+        const failSafe = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* ignore */
+          }
+          reject(new Error('Runner did not exit within 15s of SIGTERM'));
+        }, 15_000);
+
+        child.on('close', (code, signal) => {
+          clearTimeout(failSafe);
+          resolve({ code, signal });
+        });
+        child.on('error', err => {
+          clearTimeout(failSafe);
+          reject(err);
+        });
+      });
+
+      // Give the runner a moment to start doing real work — requiring
+      // cdk-nag + aws-cdk-lib takes ~200–500ms — then cancel.
+      await new Promise(r => setTimeout(r, 150));
+      child.kill('SIGTERM');
+
+      const { code, signal } = await exitPromise;
+      // When killed by SIGTERM, Node reports code=null and signal='SIGTERM'.
+      // On some platforms (or if the handler catches and exits) we may see
+      // a non-zero code instead. Either outcome proves cancellation worked.
+      const cancelled = signal === 'SIGTERM' || (code !== 0 && code !== null);
+      assert.ok(
+        cancelled,
+        `Runner should have exited via SIGTERM. Got code=${code}, signal=${signal}`
+      );
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+});

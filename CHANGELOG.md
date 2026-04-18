@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Auto-validate on save** (opt-in via `cdkNagValidator.autoValidate`, default `true`) — new `createSaveListener` debounces rapid saves (500 ms per URI) so format-on-save loops coalesce into a single validation. Only fires for TypeScript / JavaScript files.
+- **Progress notification + cancellation** for every validation run. `vscode.window.withProgress` + a cancel button that sends SIGTERM to the runner child process. Cancellation is silent (no "validation failed" popup) when the user initiated it.
+- **Async filesystem throughout the validation pipeline** — `fs.promises.mkdtemp` / `writeFile` / `rm` replace their `*Sync` counterparts in `runCdkNag`, so long validations no longer block the extension host event loop.
+- Jest coverage for `createSaveListener` (9 new tests: debounce coalescing, language-id gating, auto-validate gating read on every save, dispose cancels pending timers).
+- Functional coverage for runner SIGTERM cancellation — the runner exits promptly when killed mid-execution.
 - `CDK NAG` LogOutputChannel for structured diagnostic output (replaces 68 scattered `console.log` calls). All logs now respect the user's Log Level setting.
 - `migrateLegacyConfig()` activation step: copies user-set values from the legacy `cdk-nag-validator.*` settings namespace to `cdkNagValidator.*` and surfaces a one-shot migration notice.
 - Jest unit coverage for `ConfigManager` (round-trip save/load, defaults, malformed JSON fallback, package-detection in dependencies vs devDependencies).
