@@ -12,11 +12,7 @@
 //     to users and silently lost at runtime.
 
 import * as vscode from 'vscode';
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
 import * as path from 'path';
-import * as fs from 'fs';
-import * as os from 'os';
 import { ConfigManager } from './configManager';
 import { getOutputChannel, disposeOutputChannel } from './outputChannel';
 import { createSaveListener } from './saveListener';
@@ -28,33 +24,24 @@ import {
 } from './providers/codeActionProvider';
 import { CdkNagHoverProvider } from './providers/hoverProvider';
 import { createCdkNagChatParticipant } from './chat/participant';
+import { ValidationCancelledError } from './runner';
+import { runCdkNagValidation, type CdkNagFinding } from './runValidation';
+import { ExplainRuleTool, EXPLAIN_RULE_TOOL_NAME } from './tools/explainRuleTool';
+import { ValidateFileTool, VALIDATE_FILE_TOOL_NAME } from './tools/validateFileTool';
 
-const execAsync = promisify(exec);
-
-/** Thrown when the user cancels a validation via the progress notification. */
-class ValidationCancelledError extends Error {
-  constructor() {
-    super('Validation cancelled by user');
-    this.name = 'ValidationCancelledError';
-  }
-}
+// `spawnRunner` and the full runner-invocation pipeline now live in
+// `src/runner.ts` and `src/runValidation.ts` so the Language Model Tools
+// can call them without importing from `extension.ts` (which would cause a
+// circular dependency via the tool-registration branch below).
 
 // DiagnosticCollection is initialised in activate() and cleaned up via
 // context.subscriptions.
 let diagnosticCollection: vscode.DiagnosticCollection;
 
-// Whitelist of rule packs we support. Must stay in sync with the enum in
-// package.json → contributes.configuration.cdkNagValidator.enabledRulePacks.
-const AVAILABLE_RULE_PACKS = [
-  'AwsSolutionsChecks',
-  'HIPAA.SecurityChecks',
-  'NIST.800-53.R4Checks',
-  'NIST.800-53.R5Checks',
-  'PCI.DSS.321Checks',
-  'ServerlessChecks',
-];
+// The rule-pack whitelist now lives in `src/runValidation.ts` as
+// `AVAILABLE_RULE_PACKS` — see that module for the authoritative list.
 
-// Remediation hints + rule documentation now live in `src/ruleDocs.ts`,
+// Remediation hints + rule documentation live in `src/ruleDocs.ts`,
 // keyed by the actual cdk-nag rule IDs (e.g. `AwsSolutions-S1`). The old
 // made-up-category table never matched real diagnostic.code values, so
 // quick-fixes were silently unreachable. See `lookupRuleDoc` / `lookupRuleFix`.
@@ -65,25 +52,9 @@ const AVAILABLE_RULE_PACKS = [
 // migrateLegacyConfig below). After v0.3.0 the legacy namespace will be
 // dropped entirely.
 
-function getConfiguredRulePacks(): string[] {
-  const config = vscode.workspace.getConfiguration('cdkNagValidator');
-  const enabledPacks = config.get<string[]>('enabledRulePacks', ['AwsSolutionsChecks']);
-  return enabledPacks.filter(pack => AVAILABLE_RULE_PACKS.includes(pack));
-}
-
-function getCustomRules(): unknown[] {
-  const config = vscode.workspace.getConfiguration('cdkNagValidator');
-  return config.get<unknown[]>('customRules', []);
-}
-
 export function shouldAutoValidate(): boolean {
   const config = vscode.workspace.getConfiguration('cdkNagValidator');
   return config.get<boolean>('autoValidate', true);
-}
-
-function shouldAutoInstall(): boolean {
-  const config = vscode.workspace.getConfiguration('cdkNagValidator');
-  return config.get<boolean>('autoInstall', false);
 }
 
 // ── Legacy config migration ─────────────────────────────────────────────────
@@ -170,205 +141,6 @@ export async function migrateLegacyConfig(): Promise<boolean> {
   return migratedAny;
 }
 
-// ── Runner invocation ───────────────────────────────────────────────────────
-// Spawn the compiled cdkNagRunner as a child process.
-//
-// All user-controlled data (template path, custom rule objects) is serialised
-// to a temporary JSON file and passed to the runner as a file-system path.
-// Nothing is ever interpolated into a shell string, eliminating the
-// shell-injection vulnerability that existed in the previous node -e approach.
-//
-// Custom rule conditions are evaluated inside the runner using
-// vm.runInNewContext with a sandboxed context — see src/cdkNagRunner.ts.
-//
-// If `token` is provided and fires cancellation, the child process is killed
-// with SIGTERM and the promise rejects with a ValidationCancelledError.
-export async function spawnRunner(
-  inputPath: string,
-  workspacePath: string,
-  token?: vscode.CancellationToken
-): Promise<string> {
-  const channel = getOutputChannel();
-  const runnerScript = path.join(__dirname, 'cdkNagRunner.js');
-
-  return new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const errChunks: Buffer[] = [];
-    let cancelled = false;
-
-    // Use spawn (not exec/execAsync) so that NO shell is involved.
-    // argv[2] is the path to the JSON input file — a plain file-system path,
-    // not user-supplied data interpolated into a command string.
-    const child = spawn(process.execPath, [runnerScript, inputPath], {
-      cwd: workspacePath,
-      shell: false, // explicit — never invoke a shell
-    });
-
-    const cancelSub = token?.onCancellationRequested(() => {
-      cancelled = true;
-      channel.warn('Validation cancelled — sending SIGTERM to runner');
-      // SIGTERM gives the runner a chance to clean up; if it ignores, the
-      // 'close' handler below still resolves the promise.
-      try {
-        child.kill('SIGTERM');
-      } catch (err) {
-        channel.warn(
-          `Failed to kill runner process: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    });
-
-    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => errChunks.push(chunk));
-
-    child.on('close', code => {
-      cancelSub?.dispose();
-      if (cancelled) {
-        reject(new ValidationCancelledError());
-        return;
-      }
-      const stderr = Buffer.concat(errChunks).toString('utf8').trim();
-      if (code !== 0) {
-        reject(new Error(`CDK-NAG runner exited with code ${code}: ${stderr}`));
-        return;
-      }
-      if (stderr) {
-        channel.warn(`CDK-NAG runner warnings: ${stderr}`);
-      }
-      resolve(Buffer.concat(chunks).toString('utf8'));
-    });
-
-    child.on('error', err => {
-      cancelSub?.dispose();
-      reject(err);
-    });
-  });
-}
-
-// Run CDK-NAG with configured rule packs and custom rules.
-//
-// `progress` — if supplied, receives pack-by-pack report() updates so the
-// notification surface can show what stage the validation is at.
-// `token`    — if supplied, kills the runner child process on cancel. The
-// async fs operations in this function check the token at awaitable points
-// so we can abort between steps rather than only at the runner step.
-async function runCdkNag(
-  workspacePath: string,
-  progress?: vscode.Progress<{ message?: string; increment?: number }>,
-  token?: vscode.CancellationToken
-): Promise<string> {
-  const channel = getOutputChannel();
-  const rulePacks = getConfiguredRulePacks();
-  const customRules = getCustomRules();
-
-  if (rulePacks.length === 0 && customRules.length === 0) {
-    throw new Error(
-      'No rule packs or custom rules configured. Please enable at least one rule pack or add custom rules in settings.'
-    );
-  }
-
-  channel.info(`Running CDK-NAG with rule packs: ${rulePacks.join(', ')}`);
-  if (customRules.length > 0) {
-    channel.info(`Running with ${customRules.length} custom rule(s)`);
-  }
-
-  if (token?.isCancellationRequested) {
-    throw new ValidationCancelledError();
-  }
-
-  // ── Optional dependency installation (opt-in via cdkNagValidator.autoInstall) ──
-  // Auto-running `npm install` in a user's project on every validation is
-  // invasive and can break lock-files or trigger unexpected side effects.
-  // It is therefore disabled by default; the user must explicitly enable it
-  // in settings ("cdkNagValidator.autoInstall": true).
-  if (shouldAutoInstall()) {
-    try {
-      progress?.report({ message: 'Installing workspace dependencies…' });
-      channel.info('autoInstall is enabled — installing workspace dependencies...');
-      await execAsync('npm install aws-cdk aws-cdk-lib cdk-nag yaml --save-dev', {
-        cwd: workspacePath,
-      });
-      channel.info('Dependencies installed successfully');
-    } catch (error) {
-      channel.error(
-        `Error installing dependencies: ${error instanceof Error ? error.message : String(error)}`
-      );
-      throw new Error(
-        `Failed to install required dependencies: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
-  }
-
-  if (token?.isCancellationRequested) {
-    throw new ValidationCancelledError();
-  }
-
-  // Synthesise the CDK template
-  progress?.report({ message: 'Synthesising CDK template…' });
-  const { stdout: synthOutput, stderr: synthError } = await execAsync('cdk synth --no-staging', {
-    cwd: workspacePath,
-  });
-  if (synthError) {
-    channel.error(`CDK synth error: ${synthError}`);
-    throw new Error(`CDK synthesis failed: ${synthError}`);
-  }
-  channel.info('CDK synthesis completed successfully');
-
-  if (token?.isCancellationRequested) {
-    throw new ValidationCancelledError();
-  }
-
-  // Write synthesised template to a temp file. Use a unique per-invocation
-  // directory so concurrent validations do not race on the same files.
-  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'cdk-nag-'));
-  const templatePath = path.join(tempDir, 'template.yaml');
-  await fs.promises.writeFile(templatePath, synthOutput);
-
-  // Read workspace-level suppressions so the runner can filter findings
-  // before emitting them. Never throws — missing/empty is the happy path.
-  let suppressions: string[] = [];
-  try {
-    suppressions = await ConfigManager.getSuppressions(workspacePath);
-  } catch (err) {
-    channel.warn(
-      `Failed to read suppressions — proceeding without: ${
-        err instanceof Error ? err.message : String(err)
-      }`
-    );
-  }
-
-  // Build the structured input for the runner — pure JSON, no shell escaping.
-  const runnerInput = {
-    templatePath,
-    rulePacks,
-    customRules,
-    workspacePath,
-    suppressions,
-  };
-  const inputPath = path.join(tempDir, 'runner-input.json');
-  await fs.promises.writeFile(inputPath, JSON.stringify(runnerInput, null, 2));
-
-  let stdout: string;
-  try {
-    progress?.report({ message: `Applying ${rulePacks.length} rule pack(s)…` });
-    stdout = await spawnRunner(inputPath, workspacePath, token);
-  } finally {
-    // Always clean up, even on failure or cancellation.
-    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(err => {
-      channel.warn(
-        `Failed to clean up temp dir ${tempDir}: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
-    });
-  }
-
-  channel.debug(`CDK-NAG output: ${stdout}`);
-  return stdout;
-}
-
 // ── Finding → source-location mapping ───────────────────────────────────────
 // Uses `parseResourceDefinitions` (multi-line, nested-brace aware) to locate
 // `new TypeName(this, 'id'[, {...}])` constructs and attach each finding's
@@ -377,13 +149,7 @@ async function runCdkNag(
 // diagnostic rather than being silently dropped.
 async function mapFindingsToSourceLocations(
   document: vscode.TextDocument,
-  findings: Array<{
-    id: string;
-    name: string;
-    description: string;
-    level: string;
-    resourceId: string;
-  }>
+  findings: CdkNagFinding[]
 ): Promise<vscode.Diagnostic[]> {
   const channel = getOutputChannel();
   const diagnostics: vscode.Diagnostic[] = [];
@@ -472,26 +238,15 @@ async function validateFile(
     throw new Error('No workspace folder found');
   }
 
-  const output = await runCdkNag(workspaceFolder.uri.fsPath, progress, token);
-
-  // Parse the output (guard against malformed runner output).
-  let findings: Array<{
-    id: string;
-    name: string;
-    description: string;
-    level: string;
-    resourceId: string;
-  }>;
+  let findings: CdkNagFinding[];
   try {
-    findings = JSON.parse(output);
-  } catch (parseError) {
-    const preview = (output ?? '').toString().slice(0, 200);
-    const message = `Failed to parse CDK-NAG output as JSON: ${
-      parseError instanceof Error ? parseError.message : String(parseError)
-    }. Output preview: ${preview}`;
+    findings = await runCdkNagValidation(workspaceFolder.uri.fsPath, { progress, token });
+  } catch (err) {
+    if (err instanceof ValidationCancelledError) throw err;
+    const message = err instanceof Error ? err.message : String(err);
     channel.error(message);
     void vscode.window.showErrorMessage(message);
-    throw new Error(message);
+    throw err;
   }
 
   if (findings.length > 0) {
@@ -512,22 +267,7 @@ async function validateWorkspace(
 ): Promise<void> {
   const channel = getOutputChannel();
   channel.info(`Running CDK-NAG validation for workspace: ${workspaceFolder.uri.fsPath}`);
-  const output = await runCdkNag(workspaceFolder.uri.fsPath, progress, token);
-
-  let findings: Array<{
-    id: string;
-    name: string;
-    description: string;
-    level: string;
-    resourceId: string;
-  }>;
-  try {
-    findings = JSON.parse(output);
-  } catch (error) {
-    throw new Error(
-      `Failed to parse CDK-NAG output: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+  const findings = await runCdkNagValidation(workspaceFolder.uri.fsPath, { progress, token });
 
   if (findings.length > 0) {
     const files = await vscode.workspace.findFiles('**/*.ts');
@@ -782,6 +522,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     channel.warn(`Failed to register @cdk-nag chat participant: ${msg}`);
+  }
+
+  // Register the Language Model Tools (`cdkNag_validateFile`,
+  // `cdkNag_explainRule`). These are callable from Copilot agent mode and
+  // from within the chat participant via `vscode.lm.invokeTool`. Runtime
+  // gated because `vscode.lm.registerTool` was finalised in VS Code 1.97 —
+  // older hosts and non-Copilot forks will not have this surface.
+  try {
+    const lm = (vscode as unknown as { lm?: typeof vscode.lm }).lm;
+    if (lm && typeof lm.registerTool === 'function') {
+      context.subscriptions.push(lm.registerTool(EXPLAIN_RULE_TOOL_NAME, new ExplainRuleTool()));
+      context.subscriptions.push(lm.registerTool(VALIDATE_FILE_TOOL_NAME, new ValidateFileTool()));
+      channel.info(
+        `Registered Language Model Tools: ${EXPLAIN_RULE_TOOL_NAME}, ${VALIDATE_FILE_TOOL_NAME}`
+      );
+    } else {
+      channel.info(
+        'Language Model Tool API not available on this host — skipping tool registration'
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    channel.warn(`Failed to register cdk-nag Language Model Tools: ${msg}`);
   }
 
   channel.info('CDK NAG Validator activated');

@@ -85,9 +85,9 @@
 | ID | Title | Category | Effort | Status |
 |----|-------|----------|--------|--------|
 | AI1 | **Copilot Chat participant `@cdk-nag`** | Feature | M | ✅ Done (PR 5) |
-|    | `src/chat/participant.ts` + `contributes.chatParticipants` in package.json. Ask-only v1 — streams current-file CDK-NAG diagnostics + rule metadata. Registration is runtime-gated so hosts without `vscode.chat` (older VS Code, non-Copilot forks) keep working. Slash commands and natural-language rule explanations land in PR 6. | | | |
-| AI2 | **Language Model Tools (`cdkNag_validateFile`, `cdkNag_explainRule`)** | Feature | L | Pending (PR 6) |
-|    | `vscode.lm.registerTool` wiring + `contributes.languageModelTools`. Tools callable from chat and Copilot agent mode. | | | |
+|    | `src/chat/participant.ts` + `contributes.chatParticipants` in package.json. Ask-only v1 — streams current-file CDK-NAG diagnostics + rule metadata. Registration is runtime-gated so hosts without `vscode.chat` (older VS Code, non-Copilot forks) keep working. PR 6 upgrades this with full intent routing + LM tool delegation. | | | |
+| AI2 | **Language Model Tools (`cdkNag_validateFile`, `cdkNag_explainRule`)** | Feature | L | ✅ Done (PR 6) |
+|    | `src/tools/validateFileTool.ts` + `src/tools/explainRuleTool.ts` implement `vscode.LanguageModelTool<T>` with `prepareInvocation` (confirmation prompt for side-effects) + `invoke` (Markdown `LanguageModelTextPart` output). Both are registered via `vscode.lm.registerTool` in `activate()` under runtime API gating and declared in `package.json` under `contributes.languageModelTools` with `canBeReferencedInPrompt: true` + `toolReferenceName` so Copilot agent mode can invoke `#cdkNagValidateFile` / `#cdkNagExplainRule`. The chat participant now routes `validate`/`scan`/`check` prompts to `cdkNag_validateFile` (extracting optional `.ts`/`.js` paths) and rule-id prompts to `cdkNag_explainRule`, with graceful fallback to a local curated lookup when the LM API is missing. `CancellationToken` is threaded into the runner child process. Shared pipeline extracted into `src/runner.ts` + `src/runValidation.ts` so the tool and the commands use the same code path. 52 new Jest tests (14 explain, ~20 validate, 18 chat), total Jest coverage grows from 81 → 135. | | | |
 | AI3 | **LM-assisted CodeAction with safety rails** | Feature | L | Pending (PR 7) |
 |    | Opt-in `cdkNagValidator.enableAiSuggestions`, snippet scrubber (regex against .gitleaks.toml patterns), diff-preview show-before-apply. | | | |
 

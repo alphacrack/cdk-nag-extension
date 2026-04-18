@@ -19,6 +19,9 @@ import {
   CHAT_PARTICIPANT_ID,
   createChatHandler,
   createCdkNagChatParticipant,
+  detectIntent,
+  extractRuleId,
+  extractToolText,
 } from '../../chat/participant';
 
 type StreamCall = { kind: 'markdown'; text: string };
@@ -134,12 +137,14 @@ describe('createChatHandler (streaming)', () => {
     expect(text).toContain('AwsSolutions-EC23');
   });
 
-  it('echoes the user prompt back when non-empty', async () => {
+  it('echoes the user prompt back when non-empty (no-intent fallback)', async () => {
+    // Use a prompt that doesn't trigger the validate/explain intents so we
+    // exercise the ask-only scaffold that echoes the prompt back.
     const handler = createChatHandler();
     const { stream, calls } = makeFakeStream();
     await handler(
       {
-        prompt: 'explain S3 encryption rule',
+        prompt: 'hello there',
         command: undefined,
         references: [],
         toolReferences: [],
@@ -153,7 +158,7 @@ describe('createChatHandler (streaming)', () => {
       } as unknown as vscode.CancellationToken
     );
     const text = streamText(calls);
-    expect(text).toContain('**You asked**: explain S3 encryption rule');
+    expect(text).toContain('**You asked**: hello there');
   });
 
   it('shows "no findings" nudge when the active editor has no CDK-NAG diagnostics', async () => {
@@ -279,5 +284,252 @@ describe('createChatHandler (streaming)', () => {
     expect(text).toContain('No CDK-NAG diagnostics');
     expect(text).not.toContain('**2322**');
     expect(text).not.toContain('**no-unused**');
+  });
+});
+
+describe('extractRuleId', () => {
+  it('matches AwsSolutions-* rule ids', () => {
+    expect(extractRuleId('why is AwsSolutions-S1 being flagged?')).toBe('AwsSolutions-S1');
+  });
+  it('matches HIPAA.Security-* rule ids', () => {
+    expect(extractRuleId('explain HIPAA.Security-S3BucketVersioningEnabled please')).toBe(
+      'HIPAA.Security-S3BucketVersioningEnabled'
+    );
+  });
+  it('matches NIST.800-53.R5-* rule ids', () => {
+    expect(extractRuleId('what does NIST.800-53.R5-S3BucketLogging check?')).toBe(
+      'NIST.800-53.R5-S3BucketLogging'
+    );
+  });
+  it('returns undefined when no rule id is present', () => {
+    expect(extractRuleId('just tell me things')).toBeUndefined();
+  });
+  it('does not mis-match common hyphenated words', () => {
+    expect(extractRuleId('turn on auto-install for me')).toBeUndefined();
+  });
+});
+
+describe('detectIntent', () => {
+  it('detects validate intent from common verbs', () => {
+    expect(detectIntent('validate the current file')).toBe('validate');
+    expect(detectIntent('scan my workspace')).toBe('validate');
+    expect(detectIntent('run cdk-nag on stack.ts')).toBe('validate');
+  });
+  it('detects explain intent when a rule id is present', () => {
+    expect(detectIntent('why is AwsSolutions-S1 flagged')).toBe('explain');
+  });
+  it('detects explain intent from common verbs without a rule id', () => {
+    expect(detectIntent('explain that finding please')).toBe('explain');
+    expect(detectIntent('what does this rule do')).toBe('explain');
+  });
+  it('returns undefined for small talk', () => {
+    expect(detectIntent('hi')).toBeUndefined();
+    expect(detectIntent('')).toBeUndefined();
+  });
+});
+
+describe('extractToolText', () => {
+  it('concatenates value fields from LanguageModelTextPart-like content', () => {
+    const result = new vscode.LanguageModelToolResult([
+      new vscode.LanguageModelTextPart('alpha'),
+      new vscode.LanguageModelTextPart('beta'),
+    ]);
+    expect(extractToolText(result)).toBe('alpha\nbeta');
+  });
+  it('skips non-string values (e.g. prompt-tsx parts)', () => {
+    const result = {
+      content: [new vscode.LanguageModelTextPart('text'), { value: { notAString: true } }],
+    } as unknown as vscode.LanguageModelToolResult;
+    expect(extractToolText(result)).toBe('text');
+  });
+  it('returns empty string for undefined input', () => {
+    expect(extractToolText(undefined)).toBe('');
+  });
+});
+
+describe('createChatHandler — intent-driven tool invocation', () => {
+  const lmMock = vscode.lm as unknown as { invokeTool: jest.Mock };
+
+  beforeEach(() => {
+    lmMock.invokeTool.mockReset();
+    (vscode.languages.getDiagnostics as unknown as jest.Mock).mockReset();
+    (vscode.languages.getDiagnostics as unknown as jest.Mock).mockReturnValue([]);
+    (vscode.window as unknown as { activeTextEditor?: unknown }).activeTextEditor = undefined;
+  });
+
+  it('invokes cdkNag_explainRule when the prompt contains a rule id', async () => {
+    lmMock.invokeTool.mockResolvedValue(
+      new vscode.LanguageModelToolResult([
+        new vscode.LanguageModelTextPart('**AwsSolutions-S1** explanation'),
+      ])
+    );
+    const handler = createChatHandler();
+    const { stream, calls } = makeFakeStream();
+    await handler(
+      {
+        prompt: 'why is AwsSolutions-S1 flagged',
+        command: undefined,
+        references: [],
+        toolReferences: [],
+        toolInvocationToken: undefined as unknown,
+      } as unknown as vscode.ChatRequest,
+      { history: [] } as unknown as vscode.ChatContext,
+      stream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: jest.fn(),
+      } as unknown as vscode.CancellationToken
+    );
+
+    expect(lmMock.invokeTool).toHaveBeenCalledWith(
+      'cdkNag_explainRule',
+      expect.objectContaining({ input: { ruleId: 'AwsSolutions-S1' } }),
+      expect.anything()
+    );
+    const text = streamText(calls);
+    expect(text).toContain('**AwsSolutions-S1** explanation');
+  });
+
+  it('invokes cdkNag_validateFile when prompt includes "validate"', async () => {
+    lmMock.invokeTool.mockResolvedValue(
+      new vscode.LanguageModelToolResult([
+        new vscode.LanguageModelTextPart('### cdk-nag validation — stack.ts\nNo findings.'),
+      ])
+    );
+    const handler = createChatHandler();
+    const { stream, calls } = makeFakeStream();
+    await handler(
+      {
+        prompt: 'validate stack.ts',
+        command: undefined,
+        references: [],
+        toolReferences: [],
+        toolInvocationToken: undefined as unknown,
+      } as unknown as vscode.ChatRequest,
+      { history: [] } as unknown as vscode.ChatContext,
+      stream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: jest.fn(),
+      } as unknown as vscode.CancellationToken
+    );
+    expect(lmMock.invokeTool).toHaveBeenCalledWith(
+      'cdkNag_validateFile',
+      expect.objectContaining({ input: { uri: 'stack.ts' } }),
+      expect.anything()
+    );
+    const text = streamText(calls);
+    expect(text).toContain('cdk-nag validation');
+    expect(text).toContain('No findings.');
+  });
+
+  it('invokes cdkNag_validateFile with empty input when prompt has no file hint', async () => {
+    lmMock.invokeTool.mockResolvedValue(
+      new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart('Result here')])
+    );
+    const handler = createChatHandler();
+    const { stream, calls } = makeFakeStream();
+    await handler(
+      {
+        prompt: 'scan my workspace',
+        command: undefined,
+        references: [],
+        toolReferences: [],
+        toolInvocationToken: undefined as unknown,
+      } as unknown as vscode.ChatRequest,
+      { history: [] } as unknown as vscode.ChatContext,
+      stream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: jest.fn(),
+      } as unknown as vscode.CancellationToken
+    );
+    expect(lmMock.invokeTool).toHaveBeenCalledWith(
+      'cdkNag_validateFile',
+      expect.objectContaining({ input: {} }),
+      expect.anything()
+    );
+    expect(streamText(calls)).toContain('Result here');
+  });
+
+  it('falls back to curated lookup when lm.invokeTool throws for explain', async () => {
+    lmMock.invokeTool.mockRejectedValue(new Error('invokeTool blew up'));
+    const handler = createChatHandler();
+    const { stream, calls } = makeFakeStream();
+    await handler(
+      {
+        prompt: 'explain AwsSolutions-S1',
+        command: undefined,
+        references: [],
+        toolReferences: [],
+        toolInvocationToken: undefined as unknown,
+      } as unknown as vscode.ChatRequest,
+      { history: [] } as unknown as vscode.ChatContext,
+      stream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: jest.fn(),
+      } as unknown as vscode.CancellationToken
+    );
+    const text = streamText(calls);
+    expect(text).toMatch(/Falling back to the curated lookup/i);
+    expect(text).toContain('S3 Bucket Server Access Logging Disabled');
+  });
+
+  it('falls back to curated lookup when lm is unavailable for explain', async () => {
+    const originalLm = (vscode as unknown as { lm?: unknown }).lm;
+    try {
+      (vscode as unknown as { lm?: unknown }).lm = undefined;
+      const handler = createChatHandler();
+      const { stream, calls } = makeFakeStream();
+      await handler(
+        {
+          prompt: 'explain AwsSolutions-S1',
+          command: undefined,
+          references: [],
+          toolReferences: [],
+          toolInvocationToken: undefined as unknown,
+        } as unknown as vscode.ChatRequest,
+        { history: [] } as unknown as vscode.ChatContext,
+        stream,
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: jest.fn(),
+        } as unknown as vscode.CancellationToken
+      );
+      const text = streamText(calls);
+      expect(text).toContain('AwsSolutions-S1');
+      expect(text).toContain('S3 Bucket Server Access Logging Disabled');
+    } finally {
+      (vscode as unknown as { lm?: unknown }).lm = originalLm;
+    }
+  });
+
+  it('informs the user when validate is requested without lm available', async () => {
+    const originalLm = (vscode as unknown as { lm?: unknown }).lm;
+    try {
+      (vscode as unknown as { lm?: unknown }).lm = undefined;
+      const handler = createChatHandler();
+      const { stream, calls } = makeFakeStream();
+      await handler(
+        {
+          prompt: 'validate the workspace',
+          command: undefined,
+          references: [],
+          toolReferences: [],
+          toolInvocationToken: undefined as unknown,
+        } as unknown as vscode.ChatRequest,
+        { history: [] } as unknown as vscode.ChatContext,
+        stream,
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: jest.fn(),
+        } as unknown as vscode.CancellationToken
+      );
+      const text = streamText(calls);
+      expect(text).toMatch(/Language Model Tool API not available/i);
+    } finally {
+      (vscode as unknown as { lm?: unknown }).lm = originalLm;
+    }
   });
 });
