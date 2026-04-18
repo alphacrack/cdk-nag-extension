@@ -29,10 +29,10 @@
 
 | ID | Title | Category | Effort | Status |
 |----|-------|----------|--------|--------|
-| H1 | **Unify dual configuration systems** | Architecture | L | Pending |
-|    | VS Code settings (`cdkNagValidator.*`) and ConfigManager file (`.vscode/cdk-nag-config.json`) are disconnected. Pick one source of truth. Also fix inconsistent key prefixes (`cdkNagValidator` vs `cdk-nag-validator`). | | | |
-| H2 | **Remove all dead code** | Cleanup | M | Pending |
-|    | `validateCdkCode()` (L814–844, incomplete), `validateCurrentFile()` (L743–758), `shouldValidateFile()` (L678–741), `shouldAutoValidate()` (L58–61), `shouldShowInlineSuggestions()` (L52–55), `COMMON_FIXES` (L24–36), `checkNodeVersion()` (L410–432), `checkAndInstallAwsCdk()` (L368–407), `checkCdkNagDependency()` (L331–365), `installCdkNag()` (L299–328). | | | |
+| H1 | **Unify dual configuration systems** | Architecture | L | ✅ Done (PR 1) |
+|    | Settings consolidated under `cdkNagValidator.*`. Legacy `cdk-nag-validator.*` keys auto-migrated on activation via `migrateLegacyConfig()` (extension.ts), with a one-shot user notice. Legacy namespace kept for 2 releases, dropped in v0.3.0. `.vscode/cdk-nag-config.json` (ConfigManager) is reserved for workspace-shared custom rules + suppressions — two scopes, one schema. | | | |
+| H2 | **Remove all dead code** | Cleanup | M | ✅ Done (PR 1) |
+|    | Removed: `validateCdkCode()`, `validateCurrentFile()`, `shouldValidateFile()`, `shouldShowInlineSuggestions()`, `checkNodeVersion()`, `checkAndInstallAwsCdk()`, `checkCdkNagDependency()`, `installCdkNag()`, and the duplicate unused `configureRules()` function. Extension trimmed from 848 → ~430 lines. `COMMON_FIXES` and `shouldAutoValidate` retained for PR 3a/3b. All 68 `console.log` calls replaced by the `CDK NAG` LogOutputChannel. | | | |
 | H3 | **Fix missing await on async configureRules** | Bug | S | ✅ Done (this branch) |
 |    | `configureRulesCommand` handler now `async` and awaits `ConfigManager.configureRules`, with error-boundary messaging. | | | |
 | H4 | **Fix JSON.parse crash on bad CDK-NAG output** | Bug | S | ✅ Done (this branch) |
