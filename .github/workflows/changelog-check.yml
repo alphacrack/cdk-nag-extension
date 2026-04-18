@@ -1,0 +1,80 @@
+name: CHANGELOG check
+
+# Fails a PR if it mutates source code without touching CHANGELOG.md.
+# Docs-only, CI-only, tooling-only, and label-opt-out PRs are skipped.
+#
+# Rationale: PR 4 decouples Marketplace publishing from merges to main and
+# delegates release notes to `gh release create --generate-notes`. Keeping
+# CHANGELOG.md honest per-PR is what makes that generated changelog useful
+# rather than empty.
+
+on:
+  pull_request:
+    branches: [main, development]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+# Only one run per PR ref — a re-push cancels the old run.
+concurrency:
+  group: changelog-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: CHANGELOG.md updated
+    runs-on: ubuntu-latest
+    # Skip when the PR author has explicitly labeled the change as exempt.
+    if: >-
+      !contains(github.event.pull_request.labels.*.name, 'skip-changelog')
+      && !contains(github.event.pull_request.labels.*.name, 'docs')
+      && !contains(github.event.pull_request.labels.*.name, 'chore')
+      && !contains(github.event.pull_request.labels.*.name, 'dependencies')
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # need both sides of the diff
+
+      - name: Compute diff base
+        id: base
+        run: echo "sha=$(git merge-base origin/${{ github.base_ref }} HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect changed files
+        id: inspect
+        env:
+          BASE: ${{ steps.base.outputs.sha }}
+        run: |
+          # Complete list of touched files in this PR.
+          git diff --name-only "$BASE" HEAD > /tmp/changed.txt
+          echo "Files changed in this PR:"
+          cat /tmp/changed.txt
+
+          # Did any production source or config change? (This is what warrants a CHANGELOG entry.)
+          if grep -E '^(src/|package\.json$|\.github/workflows/|media/|\.vscodeignore$|tsconfig\.json$)' /tmp/changed.txt > /dev/null; then
+            echo "source_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "source_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Did CHANGELOG.md change?
+          if grep -F 'CHANGELOG.md' /tmp/changed.txt > /dev/null; then
+            echo "changelog_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changelog_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enforce CHANGELOG update for source-changing PRs
+        if: steps.inspect.outputs.source_changed == 'true' && steps.inspect.outputs.changelog_changed != 'true'
+        run: |
+          echo "::error::This PR modifies production source/config but does not update CHANGELOG.md."
+          echo ""
+          echo "How to fix:"
+          echo "  1. Add a bullet under '## [Unreleased]' in CHANGELOG.md."
+          echo "  2. Or, if this change truly needs no changelog entry, add one of these labels:"
+          echo "       - skip-changelog"
+          echo "       - docs"
+          echo "       - chore"
+          echo "       - dependencies"
+          exit 1
+
+      - name: Confirm
+        if: steps.inspect.outputs.source_changed != 'true' || steps.inspect.outputs.changelog_changed == 'true'
+        run: echo "CHANGELOG check passed."
