@@ -5,15 +5,43 @@ export const window = {
   showInformationMessage: jest.fn(),
   showErrorMessage: jest.fn(),
   showWarningMessage: jest.fn(),
+  // Supports both OutputChannel (appendLine) and LogOutputChannel (trace/info/
+  // warn/error) APIs — the extension uses LogOutputChannel via `{ log: true }`.
   createOutputChannel: jest.fn(() => ({
     appendLine: jest.fn(),
+    append: jest.fn(),
     show: jest.fn(),
+    hide: jest.fn(),
+    clear: jest.fn(),
+    dispose: jest.fn(),
+    replace: jest.fn(),
+    trace: jest.fn(),
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    logLevel: 2,
+    onDidChangeLogLevel: jest.fn(),
+    name: 'mock',
   })),
 };
 
 export const workspace = {
   getConfiguration: jest.fn(),
   onDidChangeConfiguration: jest.fn(),
+  onDidSaveTextDocument: jest.fn(),
+  onDidChangeTextDocument: jest.fn(),
+  onDidCloseTextDocument: jest.fn(),
+  workspaceFolders: undefined as unknown,
+  getWorkspaceFolder: jest.fn(),
+  findFiles: jest.fn(),
+  openTextDocument: jest.fn(),
+};
+
+export const ConfigurationTarget = {
+  Global: 1,
+  Workspace: 2,
+  WorkspaceFolder: 3,
 };
 
 export const languages = {

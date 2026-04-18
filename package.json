@@ -17,9 +17,12 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
     "onLanguage:typescript",
-    "onLanguage:javascript"
+    "onLanguage:javascript",
+    "onCommand:cdk-nag-validator.validate",
+    "onCommand:cdk-nag-validator.validateWorkspace",
+    "onCommand:cdk-nag-validator.configureRules",
+    "workspaceContains:**/cdk.json"
   ],
   "main": "./out/extension.js",
   "contributes": {
