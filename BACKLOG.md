@@ -63,7 +63,7 @@
 | M5 | **Update CI workflow** | DevOps | S | Pending |
 |    | Update Node matrix to 18.x, 20.x, 22.x (14/16 are EOL). Update actions/checkout and actions/setup-node to v4. | | | |
 | M6 | **Update outdated dev dependencies** | Deps | S | Partial (PR 2) |
-|    | `@types/vscode` now pinned `~1.96.0` (matches `engines.vscode ^1.96.2`). `vsce@^2.15.0` → `@vscode/vsce@^3.2.1`. `@types/node → ^20.x` and `typescript → 5.x` still pending (deferred to PR 8). | | | |
+|    | `@types/vscode` now pinned `~1.97.0` (matches `engines.vscode ^1.97.0` raised in PR 5 for `vscode.chat`). `vsce@^2.15.0` → `@vscode/vsce@^3.2.1`. `@types/node → ^20.x` and `typescript → 5.x` still pending (deferred to PR 8). | | | |
 | M7 | **Add extension icon** | Publishing | S | ✅ Done (PR 2) |
 |    | 128×128 `media/icon.png` added (AWS-orange shield-shape on navy). `package.json` now sets `icon`, `galleryBanner`, `badges`, `keywords`, `bugs`, `homepage`, and the `Linters` category. `.vscodeignore` added — VSIX shrinks from 48.9 MB → ~214 KB by excluding heavy AWS deps (resolved from user workspace at runtime). | | | |
 
@@ -79,6 +79,17 @@
 |    | `runCdkNag` now uses `fs.promises.mkdtemp`, `fs.promises.writeFile`, `fs.promises.rm` instead of the `*Sync` variants so long validations do not block the extension host. | | | |
 | L4 | **Add progress indicator during validation** | UX | S | ✅ Done (PR 3a) |
 |    | `runValidationWithProgress` helper wraps every validation entry-point in `vscode.window.withProgress({ location: Notification, cancellable: true })`. The cancel button sends `SIGTERM` to the runner and the extension silently suppresses the resulting `ValidationCancelledError`. | | | |
+
+### AI-ready track
+
+| ID | Title | Category | Effort | Status |
+|----|-------|----------|--------|--------|
+| AI1 | **Copilot Chat participant `@cdk-nag`** | Feature | M | ✅ Done (PR 5) |
+|    | `src/chat/participant.ts` + `contributes.chatParticipants` in package.json. Ask-only v1 — streams current-file CDK-NAG diagnostics + rule metadata. Registration is runtime-gated so hosts without `vscode.chat` (older VS Code, non-Copilot forks) keep working. Slash commands and natural-language rule explanations land in PR 6. | | | |
+| AI2 | **Language Model Tools (`cdkNag_validateFile`, `cdkNag_explainRule`)** | Feature | L | Pending (PR 6) |
+|    | `vscode.lm.registerTool` wiring + `contributes.languageModelTools`. Tools callable from chat and Copilot agent mode. | | | |
+| AI3 | **LM-assisted CodeAction with safety rails** | Feature | L | Pending (PR 7) |
+|    | Opt-in `cdkNagValidator.enableAiSuggestions`, snippet scrubber (regex against .gitleaks.toml patterns), diff-preview show-before-apply. | | | |
 
 ---
 

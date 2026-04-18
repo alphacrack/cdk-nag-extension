@@ -27,6 +27,7 @@ import {
   SUPPRESS_COMMAND_ID,
 } from './providers/codeActionProvider';
 import { CdkNagHoverProvider } from './providers/hoverProvider';
+import { createCdkNagChatParticipant } from './chat/participant';
 
 const execAsync = promisify(exec);
 
@@ -763,6 +764,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       },
     })
   );
+
+  // Register the @cdk-nag Copilot Chat participant. Returns undefined on
+  // hosts without the chat API (older VS Code, non-Copilot forks), in which
+  // case we skip registration silently so the rest of the extension keeps
+  // working.
+  try {
+    const chatDisposable = createCdkNagChatParticipant();
+    if (chatDisposable) {
+      context.subscriptions.push(chatDisposable);
+      channel.info('Registered @cdk-nag chat participant');
+    } else {
+      channel.info(
+        'Chat API not available on this host — skipping @cdk-nag participant registration'
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    channel.warn(`Failed to register @cdk-nag chat participant: ${msg}`);
+  }
 
   channel.info('CDK NAG Validator activated');
 }

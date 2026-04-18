@@ -45,7 +45,7 @@
     }
   ],
   "engines": {
-    "vscode": "^1.96.2"
+    "vscode": "^1.97.0"
   },
   "categories": [
     "Linters",
@@ -87,6 +87,15 @@
         }
       ]
     },
+    "chatParticipants": [
+      {
+        "id": "cdk-nag-validator.chat",
+        "name": "cdk-nag",
+        "fullName": "CDK NAG",
+        "description": "Ask about AWS CDK / CloudFormation compliance findings surfaced by cdk-nag",
+        "isSticky": true
+      }
+    ],
     "configuration": {
       "title": "CDK NAG Validator",
       "properties": {
@@ -204,7 +213,7 @@
     "@types/jest": "^30.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.6.0",
-    "@types/vscode": "~1.96.0",
+    "@types/vscode": "~1.97.0",
     "@typescript-eslint/eslint-plugin": "^5.30.0",
     "@typescript-eslint/parser": "^5.30.0",
     "@vscode/test-electron": "^2.5.2",
