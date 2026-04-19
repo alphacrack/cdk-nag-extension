@@ -5,6 +5,16 @@ export const window = {
   showInformationMessage: jest.fn(),
   showErrorMessage: jest.fn(),
   showWarningMessage: jest.fn(),
+  // `withProgress` is a thin wrapper that invokes the task callback with a
+  // progress + cancellation-token pair. The mock supplies a non-cancelled
+  // token so the happy path works; tests can override the mock to return a
+  // cancelled token or swap the whole function.
+  withProgress: jest.fn(
+    async (_opts: unknown, task: (progress: unknown, token: unknown) => Promise<unknown>) => {
+      const token = { isCancellationRequested: false, onCancellationRequested: jest.fn() };
+      return task({ report: jest.fn() }, token);
+    }
+  ),
   // Supports both OutputChannel (appendLine) and LogOutputChannel (trace/info/
   // warn/error) APIs — the extension uses LogOutputChannel via `{ log: true }`.
   createOutputChannel: jest.fn(() => ({
@@ -26,6 +36,13 @@ export const window = {
   })),
   // Tests override `activeTextEditor` per-case by assigning to the property.
   activeTextEditor: undefined as unknown,
+};
+
+/** `vscode.ProgressLocation` enum — used by `withProgress`. */
+export const ProgressLocation = {
+  SourceControl: 1,
+  Window: 10,
+  Notification: 15,
 };
 
 // Chat API mock — `vscode.chat` was finalized in 1.97. Tests can override
@@ -55,6 +72,10 @@ export const workspace = {
   getWorkspaceFolder: jest.fn(),
   findFiles: jest.fn(),
   openTextDocument: jest.fn(),
+  // `applyEdit` default — resolves true so happy-path tests don't need to
+  // stub it. Tests can override per-case with `.mockResolvedValue(false)`
+  // to exercise the "user rejected the preview" branch.
+  applyEdit: jest.fn(async (_edit: unknown, _metadata?: unknown) => true),
 };
 
 export const ConfigurationTarget = {
@@ -136,9 +157,27 @@ export class CodeAction {
 }
 
 export class WorkspaceEdit {
-  public readonly edits: Array<{ uri: Uri; position: Position; text: string }> = [];
+  /** Raw edit operations in insertion order — tests assert against this array. */
+  public readonly edits: Array<
+    | { kind: 'insert'; uri: Uri; position: Position; text: string }
+    | {
+        kind: 'replace';
+        uri: Uri;
+        range: Range;
+        text: string;
+        metadata?: { needsConfirmation?: boolean; label?: string; description?: string };
+      }
+  > = [];
   insert(uri: Uri, position: Position, text: string): void {
-    this.edits.push({ uri, position, text });
+    this.edits.push({ kind: 'insert', uri, position, text });
+  }
+  replace(
+    uri: Uri,
+    range: Range,
+    text: string,
+    metadata?: { needsConfirmation?: boolean; label?: string; description?: string }
+  ): void {
+    this.edits.push({ kind: 'replace', uri, range, text, metadata });
   }
 }
 
@@ -187,6 +226,34 @@ export const commands = {
 
 export const ExtensionContext = jest.fn();
 
+/**
+ * Build a minimal `vscode.ExtensionContext` stand-in for tests that need
+ * `globalState`-backed persistence. The backing store is a plain Map so
+ * tests can inspect it directly. `update(key, undefined)` deletes the key
+ * to mirror the real API's semantics.
+ */
+export function createMockExtensionContext(): {
+  globalState: {
+    _store: Map<string, unknown>;
+    get: <T>(key: string) => T | undefined;
+    update: jest.Mock;
+  };
+  subscriptions: Array<{ dispose: () => void }>;
+} {
+  const store = new Map<string, unknown>();
+  return {
+    globalState: {
+      _store: store,
+      get: <T>(key: string): T | undefined => store.get(key) as T | undefined,
+      update: jest.fn(async (key: string, value: unknown) => {
+        if (value === undefined) store.delete(key);
+        else store.set(key, value);
+      }),
+    },
+    subscriptions: [],
+  };
+}
+
 // ── Language Model Tool result shapes ──
 // Real class implementations of `LanguageModelTextPart` and
 // `LanguageModelToolResult` so tests can construct them and the tool code
@@ -205,15 +272,82 @@ export class LanguageModelToolResult {
   constructor(public content: Array<LanguageModelTextPart | LanguageModelPromptTsxPart>) {}
 }
 
+// ── Language Model Chat messages ──
+// `vscode.LanguageModelChatMessage` is a class with static `User` / `Assistant`
+// factories in 1.97. No `System` role exists at this API version — system
+// instructions must be folded into the first User message.
+export const LanguageModelChatMessageRole = {
+  User: 1,
+  Assistant: 2,
+};
+
+export class LanguageModelChatMessage {
+  public readonly role: number;
+  public readonly content: string;
+  public readonly name?: string;
+  constructor(role: number, content: string, name?: string) {
+    this.role = role;
+    this.content = content;
+    this.name = name;
+  }
+  static User(content: string, name?: string): LanguageModelChatMessage {
+    return new LanguageModelChatMessage(LanguageModelChatMessageRole.User, content, name);
+  }
+  static Assistant(content: string, name?: string): LanguageModelChatMessage {
+    return new LanguageModelChatMessage(LanguageModelChatMessageRole.Assistant, content, name);
+  }
+}
+
+/**
+ * Build a fake `LanguageModelChat` whose `sendRequest` streams the supplied
+ * text chunks. Tests use this to lock the prompt shape and the response-
+ * parsing behaviour without needing a real Copilot model. If `chunks` is a
+ * function, it is called with the sent `messages` so tests can assert on
+ * what the orchestrator actually sent.
+ */
+export function makeFakeChatModel(options?: {
+  id?: string;
+  family?: string;
+  vendor?: string;
+  chunks?: string[] | ((messages: LanguageModelChatMessage[]) => string[]);
+  throwError?: Error;
+}): {
+  id: string;
+  family: string;
+  vendor: string;
+  sendRequest: jest.Mock;
+} {
+  const chunks = options?.chunks ?? [];
+  return {
+    id: options?.id ?? 'fake-gpt-4o-mini',
+    family: options?.family ?? 'gpt-4o-mini',
+    vendor: options?.vendor ?? 'copilot',
+    sendRequest: jest.fn(async (messages: LanguageModelChatMessage[]) => {
+      if (options?.throwError) throw options.throwError;
+      const resolvedChunks = typeof chunks === 'function' ? chunks(messages) : chunks;
+      return {
+        text: {
+          async *[Symbol.asyncIterator](): AsyncGenerator<string> {
+            for (const chunk of resolvedChunks) yield chunk;
+          },
+        },
+      };
+    }),
+  };
+}
+
 // Language Model API mock — `vscode.lm` was finalized in 1.97 for tool
-// registration and invocation. Tests override `registerTool` /
-// `invokeTool` via `.mockReturnValue(...)` per-case and flip the whole
-// namespace to `undefined` to exercise the "no LM tool API" fallback.
+// registration, invocation, and chat-model selection. Tests override
+// individual jest fns via `.mockReturnValue(...)` per-case and can flip
+// the whole namespace to `undefined` to exercise the "no LM API" fallback.
 export const lm = {
   registerTool: jest.fn((_name: string, _tool: unknown) => ({ dispose: jest.fn() })),
   invokeTool: jest.fn(
     async (_name: string, _options: unknown, _token?: unknown) =>
       new LanguageModelToolResult([new LanguageModelTextPart('mock tool result')])
   ),
+  // Returns an empty array by default — callers should either resolve a
+  // Copilot model or gracefully degrade. Tests override with a fake model.
+  selectChatModels: jest.fn(async (_selector?: unknown) => [] as unknown[]),
   tools: [] as unknown[],
 };

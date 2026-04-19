@@ -21,6 +21,7 @@ Run [cdk-nag](https://github.com/cdklabs/cdk-nag) against your AWS CDK project f
 - 🗒️ **Dedicated Output channel** — Look for "CDK NAG" in the Output panel dropdown for structured diagnostic logs (respects your Log Level setting).
 - 🤖 **Copilot Chat participant (`@cdk-nag`)** — Ask about findings directly in the VS Code Chat view. Natural-language intent routing: "validate the current file", "scan my workspace", or "what does `AwsSolutions-S1` check?" all resolve to the matching Language Model Tool. Falls back to a curated diagnostic preview when the Language Model Tool API isn't available on the host.
 - 🧰 **Language Model Tools** — `cdkNag_validateFile` and `cdkNag_explainRule` are registered via `vscode.lm.registerTool` and declared in `package.json` under `contributes.languageModelTools`. Copilot **agent mode** can invoke them directly with `#cdkNagValidateFile` / `#cdkNagExplainRule` during multi-step tasks, giving Copilot a reliable path to run cdk-nag and surface rule docs without hallucinating. The tools run the same validation pipeline as the commands (synth → pack → findings) and honour `CancellationToken` so the runner is SIGTERMed when Copilot cancels the invocation.
+- 🪄 **AI-assisted fix suggestions** (opt-in via `cdkNagValidator.enableAiSuggestions`) — for rules with no curated static remediation, an **Ask Copilot to suggest a fix** lightbulb appears. Snippets are scoped to ±10 lines, run through a gitleaks-regex scrubber (SSN, PAN, ARN account ids, `process.env.*`, AKIA/ASIA tokens, aws credential key-values), and the model response is staged as a `WorkspaceEdit` with `needsConfirmation: true` so you review the diff in the **Refactor Preview** panel before anything is applied. Consent is gated behind a modal and persisted in `globalState`; resettable via `CDK NAG: Reset AI-assisted-fix consent`.
 
 ## 🚀 Installation
 
@@ -99,6 +100,25 @@ Intent detection is regex-based and deliberately narrow — the participant shou
 
 Both tools gate side-effects through `prepareInvocation.confirmationMessages`, so agent mode asks the user before synthesising the CDK app. Cancellation is honoured end-to-end — the `CancellationToken` is threaded into the runner child process, which receives `SIGTERM` if Copilot abandons the invocation.
 
+**3. AI-assisted quick-fix (opt-in)** — when a finding has **no** curated static remediation, you can ask Copilot to draft one. Enable the flag in your `settings.json`:
+
+```jsonc
+{
+  "cdkNagValidator.enableAiSuggestions": true
+}
+```
+
+With the flag on, the lightbulb on an uncurated CDK-NAG diagnostic surfaces a third action: **CDK NAG: Ask Copilot to suggest a fix (`<ruleId>`)**. The flow is deliberately conservative:
+
+1. **Three gates** must all be true before the action appears: the setting is on, the host exposes `vscode.lm.selectChatModels`, and the rule id has no curated fix in `src/ruleDocs.ts`. A deterministic curated fix always wins over an AI one — we never offer both.
+2. **Consent** — the first invocation shows a modal with `Allow once` / `Always allow` / `Cancel`. `Always allow` is persisted in your VS Code `globalState` (cross-workspace). Reset it any time via the `CDK NAG: Reset AI-assisted-fix consent` command.
+3. **Scoped snippet** — we extract ±10 lines around the flagged range, never the whole file.
+4. **Scrubbed** — every snippet is run through `src/ai/scrubber.ts` before leaving the extension host. SSNs, credit-card PANs, US phone numbers, IBANs, AWS AKIA/ASIA tokens, `aws_access_key_id` / `secretAccessKey` key-values, 12-digit account ids inside ARNs, and `process.env.<NAME>` references are redacted. Every redaction is logged to the `CDK NAG` Output channel with the rule id that fired.
+5. **Show-before-apply** — the response is staged as a `WorkspaceEdit` with `needsConfirmation: true`, which routes it through VS Code's built-in **Refactor Preview** panel. Review the diff side-by-side and click **Apply** (or **Discard**) yourself. We never silently edit your code.
+6. **Cancellable** — the `sendRequest` streams inside a `vscode.window.withProgress` notification with a cancel button. Cancelling promptly stops the stream and the edit is never staged.
+
+Cost + privacy: the snippet is sent to whichever Copilot model resolves (we prefer `gpt-4o-mini` for latency, fall back to any Copilot model). Your GitHub Copilot data-handling settings apply. Turn the feature off by flipping the setting, or revoke trust by running `CDK NAG: Reset AI-assisted-fix consent`.
+
 ## 🧭 Roadmap
 
 The following features are **planned but not yet wired up**. They are declared in `package.json` or mentioned in the codebase so the contract is stable, but they are shipped in upcoming PRs:
@@ -114,14 +134,14 @@ The following features are **planned but not yet wired up**. They are declared i
 | Copilot Chat participant (`@cdk-nag`) — ask-only | `chatParticipants` | ✅ Shipped (PR 5) |
 | Language Model Tools (`cdkNag_validateFile`, `cdkNag_explainRule`) | `languageModelTools` | ✅ Shipped (PR 6) |
 | Natural-language intent routing in the chat participant | — | ✅ Shipped (PR 6) |
-| AI-suggested fixes (opt-in, scrubbed snippets) | `cdkNagValidator.enableAiSuggestions` | PR 7 |
+| AI-suggested fixes (opt-in, scrubbed snippets, show-before-apply) | `cdkNagValidator.enableAiSuggestions` | ✅ Shipped (PR 7) |
 
 See [BACKLOG.md](BACKLOG.md) for the full engineering backlog.
 
 ## ⚠️ Known Issues
 
 - **Languages** — only TypeScript and JavaScript CDK projects are supported. Python, Java, and .NET CDK apps are not currently validated.
-- **Quick-fix coverage** — curated remediations ship for the most common `AwsSolutions` rules (see Features). Uncurated rule ids still produce diagnostics + hover docs + suppressions, but no lightbulb edit. AI-generated suggestions are opt-in and land in PR 7.
+- **Quick-fix coverage** — curated remediations ship for the most common `AwsSolutions` rules (see Features). Uncurated rule ids still produce diagnostics + hover docs + suppressions. Opt into `cdkNagValidator.enableAiSuggestions` to surface an **Ask Copilot to suggest a fix** lightbulb action for uncurated rules (scrubbed snippet, show-before-apply Refactor Preview).
 - **Dependencies** — the extension requires `aws-cdk-lib` and `cdk-nag` to be installed in your workspace. A graceful install prompt lands in PR 8.
 
 ## 🛠️ Development

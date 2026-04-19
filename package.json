@@ -77,12 +77,24 @@
       {
         "command": "cdk-nag-validator.suppressFinding",
         "title": "CDK NAG: Suppress Finding for Workspace"
+      },
+      {
+        "command": "cdk-nag-validator.askCopilotForFix",
+        "title": "CDK NAG: Ask Copilot for a fix (internal)"
+      },
+      {
+        "command": "cdk-nag-validator.resetAiConsent",
+        "title": "CDK NAG: Reset AI-assisted-fix consent"
       }
     ],
     "menus": {
       "commandPalette": [
         {
           "command": "cdk-nag-validator.suppressFinding",
+          "when": "false"
+        },
+        {
+          "command": "cdk-nag-validator.askCopilotForFix",
           "when": "false"
         }
       ]
@@ -240,6 +252,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show inline suggestions for fixing issues"
+        },
+        "cdkNagValidator.enableAiSuggestions": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt-in: surface an 'Ask Copilot to suggest a fix' quick-fix when a finding has no curated remediation. Sends a scrubbed code snippet (secrets redacted) and the rule metadata to GitHub Copilot. The suggested edit is shown in the Refactor Preview panel — never applied silently. Requires GitHub Copilot to be installed and signed in."
         },
         "cdk-nag-validator.useProjectCdkNag": {
           "type": "boolean",

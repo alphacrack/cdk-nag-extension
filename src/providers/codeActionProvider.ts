@@ -1,6 +1,6 @@
 // Surfaces CDK-NAG finding remediations as lightbulb quick-fixes.
 //
-// For every diagnostic whose `source === 'CDK-NAG'` we provide up to two
+// For every diagnostic whose `source === 'CDK-NAG'` we provide up to three
 // actions:
 //   1. "Apply suggested fix" — inserts the curated snippet from RULE_DOCS as
 //      a comment block above the construct so the user can hand-merge it
@@ -8,12 +8,21 @@
 //      construct — the snippet shape rarely matches the existing code 1:1
 //      and a silent overwrite is the most hostile possible UX for security
 //      tooling. Show-then-paste is strictly better.
-//   2. "Suppress this finding" — delegates to the `cdk-nag-validator.suppressFinding`
-//      command (registered in extension.ts) which persists the rule ID to
-//      `.vscode/cdk-nag-config.json`.
+//   2. "Ask Copilot to suggest a fix" — opt-in AI-assisted remediation
+//      (PR 7). Surfaces only when (a) `cdkNagValidator.enableAiSuggestions`
+//      is true AND (b) the curated RULE_DOCS has NO static fix for this
+//      rule id (we prefer deterministic local snippets when we have them)
+//      AND (c) the host has `vscode.lm` (older VS Code / non-Copilot
+//      forks fall through silently). Delegates the actual send-snippet-to-
+//      Copilot flow to the `cdk-nag-validator.askCopilotForFix` command
+//      (src/ai/suggestFix.ts) so the provider stays stateless.
+//   3. "Suppress this finding" — delegates to the
+//      `cdk-nag-validator.suppressFinding` command (registered in
+//      extension.ts) which persists the rule ID to `.vscode/cdk-nag-config.json`.
 
 import * as vscode from 'vscode';
 import { lookupRuleFix, lookupRuleDoc } from '../ruleDocs';
+import { ASK_COPILOT_COMMAND_ID } from '../ai/suggestFix';
 
 export const CDK_NAG_DIAGNOSTIC_SOURCE = 'CDK-NAG';
 export const SUPPRESS_COMMAND_ID = 'cdk-nag-validator.suppressFinding';
@@ -32,6 +41,11 @@ export class CdkNagCodeActionProvider implements vscode.CodeActionProvider {
       d => d.source === CDK_NAG_DIAGNOSTIC_SOURCE
     );
 
+    // Pull the AI opt-in + runtime LM availability once per call — this
+    // avoids re-reading settings on every diagnostic in a multi-finding batch.
+    const aiEnabled = isAiSuggestionsEnabled();
+    const aiHostAvailable = isLanguageModelApiAvailable();
+
     for (const diagnostic of cdkNagDiagnostics) {
       const ruleId = typeof diagnostic.code === 'string' ? diagnostic.code : undefined;
       if (!ruleId) continue;
@@ -39,6 +53,11 @@ export class CdkNagCodeActionProvider implements vscode.CodeActionProvider {
       const fixSnippet = lookupRuleFix(ruleId);
       if (fixSnippet) {
         actions.push(buildApplyFixAction(document, diagnostic, ruleId, fixSnippet));
+      } else if (aiEnabled && aiHostAvailable) {
+        // Only offer the AI escape hatch when we don't have a deterministic
+        // remediation. Mixing the two would confuse users — they'd wonder
+        // whether the curated fix or the AI fix is "more correct".
+        actions.push(buildAskCopilotAction(document, diagnostic, ruleId));
       }
 
       actions.push(buildSuppressAction(document, diagnostic, ruleId));
@@ -46,6 +65,25 @@ export class CdkNagCodeActionProvider implements vscode.CodeActionProvider {
 
     return actions;
   }
+}
+
+/** Exposed for tests — each call re-reads settings so toggles take effect immediately. */
+export function isAiSuggestionsEnabled(): boolean {
+  try {
+    return (
+      vscode.workspace
+        .getConfiguration('cdkNagValidator')
+        .get<boolean>('enableAiSuggestions', false) === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Exposed for tests — mirrors the runtime gate used by `src/ai/suggestFix.ts`. */
+export function isLanguageModelApiAvailable(): boolean {
+  const lm = (vscode as unknown as { lm?: typeof vscode.lm }).lm;
+  return !!lm && typeof lm.selectChatModels === 'function';
 }
 
 /**
@@ -81,6 +119,48 @@ function buildApplyFixAction(
   edit.insert(document.uri, new vscode.Position(insertLine, 0), block);
   action.edit = edit;
 
+  return action;
+}
+
+/**
+ * Build the "Ask Copilot to suggest a fix (<ruleId>)" action. Pure-command
+ * dispatch — all the heavy lifting (consent, scrub, LM call, preview edit)
+ * runs inside the `cdk-nag-validator.askCopilotForFix` command handler in
+ * extension.ts, which has the ExtensionContext for globalState-backed
+ * consent. The payload is JSON-serialisable so VS Code can round-trip it
+ * through the command registry.
+ */
+function buildAskCopilotAction(
+  document: vscode.TextDocument,
+  diagnostic: vscode.Diagnostic,
+  ruleId: string
+): vscode.CodeAction {
+  const action = new vscode.CodeAction(
+    `CDK NAG: Ask Copilot to suggest a fix (${ruleId})`,
+    vscode.CodeActionKind.QuickFix
+  );
+  action.diagnostics = [diagnostic];
+  action.command = {
+    command: ASK_COPILOT_COMMAND_ID,
+    title: 'Ask Copilot to suggest a fix',
+    arguments: [
+      {
+        ruleId,
+        uri: document.uri.toString(),
+        range: {
+          start: {
+            line: diagnostic.range.start.line,
+            character: diagnostic.range.start.character,
+          },
+          end: {
+            line: diagnostic.range.end.line,
+            character: diagnostic.range.end.character,
+          },
+        },
+        message: diagnostic.message,
+      },
+    ],
+  };
   return action;
 }
 
