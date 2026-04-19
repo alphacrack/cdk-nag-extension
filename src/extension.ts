@@ -28,6 +28,8 @@ import { ValidationCancelledError } from './runner';
 import { runCdkNagValidation, type CdkNagFinding } from './runValidation';
 import { ExplainRuleTool, EXPLAIN_RULE_TOOL_NAME } from './tools/explainRuleTool';
 import { ValidateFileTool, VALIDATE_FILE_TOOL_NAME } from './tools/validateFileTool';
+import { askCopilotForFix, ASK_COPILOT_COMMAND_ID, type AskCopilotPayload } from './ai/suggestFix';
+import { resetAiConsent } from './ai/consent';
 
 // `spawnRunner` and the full runner-invocation pipeline now live in
 // `src/runner.ts` and `src/runValidation.ts` so the Language Model Tools
@@ -456,6 +458,38 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
       }
     )
+  );
+
+  // AI-assisted fix command — invoked from the CodeActionProvider's
+  // "Ask Copilot to suggest a fix" quick-fix. Full flow (consent,
+  // scrubbing, model call, show-before-apply preview) lives in
+  // src/ai/suggestFix.ts; this handler just validates the payload and
+  // threads the ExtensionContext through so globalState-backed consent
+  // persists across editor restarts.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(ASK_COPILOT_COMMAND_ID, async (payload?: AskCopilotPayload) => {
+      if (!payload || typeof payload.ruleId !== 'string' || typeof payload.uri !== 'string') {
+        channel.error(`${ASK_COPILOT_COMMAND_ID}: invoked without a valid payload.`);
+        void vscode.window.showErrorMessage(
+          'CDK NAG: internal error — askCopilotForFix was invoked without a rule id.'
+        );
+        return;
+      }
+      await askCopilotForFix(context, payload, { channel });
+    })
+  );
+
+  // Escape hatch: let the user clear the "Always allow" consent bit from
+  // globalState so they see the modal again next time they trigger the
+  // AI quick-fix. Surfaced via the command palette.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cdk-nag-validator.resetAiConsent', async () => {
+      await resetAiConsent(context);
+      channel.info('Reset AI-suggestions consent (globalState key cleared).');
+      void vscode.window.showInformationMessage(
+        'CDK NAG: AI-assisted-fix consent has been reset. You will be prompted again the next time you use "Ask Copilot to suggest a fix".'
+      );
+    })
   );
 
   // Register CodeAction + Hover providers for TS/JS. The providers are
