@@ -60,6 +60,15 @@ description = "Narrow allowlist for test fixtures and documentation"
 paths = [
   '''\.gitleaks\.toml$''',      # this file contains example regexes
   '''SECURITY\.md$''',          # disclosure policy references example emails
+  # AI scrubber tests intentionally contain every PII / credential shape
+  # covered by the scrubber so `scrubSnippet` can be exercised end-to-end.
+  # Every "secret" here is a standard AWS doc placeholder or RFC 5737-style
+  # reserved example — none are real.
+  '''src/test/ai/scrubber\.test\.ts$''',
+  '''src/test/ai/suggestFix\.test\.ts$''',
+  # The scrubber module itself defines the patterns used to redact these
+  # tokens; the file is pure regexes, not live secrets.
+  '''src/ai/scrubber\.ts$''',
 ]
 # regexTarget = "line" means the regex matches against the full line being
 # scanned, so `# gitleaks:allow` as a trailing comment will suppress a hit.
