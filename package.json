@@ -174,7 +174,7 @@
   },
   "dependencies": {
     "aws-cdk-lib": "^2.250.0",
-    "cdk-nag": "^2.37.55",
+    "cdk-nag": "^2.38.2",
     "yaml": "^2.3.4"
   },
   "overrides": {
