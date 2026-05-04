@@ -173,7 +173,7 @@
     "vsce": "^2.15.0"
   },
   "dependencies": {
-    "aws-cdk-lib": "^2.250.0",
+    "aws-cdk-lib": "^2.252.0",
     "cdk-nag": "^2.37.55",
     "yaml": "^2.3.4"
   },
