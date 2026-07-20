@@ -82,14 +82,15 @@ async function main(): Promise<void> {
   // versions are used.  Requires are done at runtime so that the import paths
   // are never embedded in a shell string.
   if (rulePacks.length > 0) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const cdkNag = require(require.resolve('cdk-nag', { paths: [workspacePath] }));
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+
     const awsCdkLib = require(require.resolve('aws-cdk-lib', { paths: [workspacePath] }));
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const cfnInclude = require(require.resolve('aws-cdk-lib/cloudformation-include', {
-      paths: [workspacePath],
-    }));
+
+    const cfnInclude = require(
+      require.resolve('aws-cdk-lib/cloudformation-include', {
+        paths: [workspacePath],
+      })
+    );
 
     const { App, Stack, Aspects } = awsCdkLib;
     const { CfnInclude } = cfnInclude;

@@ -1,6 +1,6 @@
 import * as path from 'path';
 import Mocha from 'mocha';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+
 const glob = require('glob');
 
 export function run(): Promise<void> {
