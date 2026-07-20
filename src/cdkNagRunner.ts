@@ -114,6 +114,44 @@ async function main(): Promise<void> {
           continue;
         }
 
+        // Use a unique outdir so synth does not clobber the user's cwd and
+        // concurrent packs don't race on shared files.
+        tmpOutdir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdk-nag-runner-'));
+
+        const app = new App({ outdir: tmpOutdir });
+        const stack = new Stack(app, 'CdkNagRunnerStack');
+
+        // CfnInclude reads the template from disk — templatePath points at
+        // the user's CloudFormation YAML/JSON file.
+        new CfnInclude(stack, 'Template', {
+          templateFile: templatePath,
+        });
+
+        // cdk-nag v3 replaced the Aspect/NagLogger model with a validator:
+        // NagPack.validateScope(scope) walks the tree directly and returns a
+        // report of violations.  v2 packs have no validateScope, so its
+        // presence is the version probe.
+        if (typeof PackClass.prototype.validateScope === 'function') {
+          const packInstance = new PackClass({ verbose: false });
+          const report = packInstance.validateScope(app);
+          for (const violation of report?.violations ?? []) {
+            for (const resource of violation.violatingResources ?? []) {
+              const constructPath = String(resource.constructPath ?? '');
+              findings.push({
+                id: violation.ruleName,
+                name: violation.description,
+                description: violation.description,
+                level: levelToString(violation.severity),
+                // constructPath is e.g. "CdkNagRunnerStack/Template/MyBucket";
+                // the final segment is the logical resource id.
+                resourceId: constructPath.split('/').pop() ?? '',
+              });
+            }
+          }
+          continue;
+        }
+
+        // ── cdk-nag v2 path ──
         // Capture findings via a custom NagLogger passed through
         // NagPackProps.additionalLoggers.  onNonCompliance fires once per
         // (rule, resource) violation — exactly what we want to emit.
@@ -160,19 +198,6 @@ async function main(): Promise<void> {
             /* no-op */
           },
         };
-
-        // Use a unique outdir so synth does not clobber the user's cwd and
-        // concurrent packs don't race on shared files.
-        tmpOutdir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdk-nag-runner-'));
-
-        const app = new App({ outdir: tmpOutdir });
-        const stack = new Stack(app, 'CdkNagRunnerStack');
-
-        // CfnInclude reads the template from disk — templatePath points at
-        // the user's CloudFormation YAML/JSON file.
-        new CfnInclude(stack, 'Template', {
-          templateFile: templatePath,
-        });
 
         Aspects.of(app).add(
           new PackClass({
