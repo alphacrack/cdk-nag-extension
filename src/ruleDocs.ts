@@ -185,6 +185,127 @@ new iam.PolicyStatement({
     severity: 'warning',
     docUrl: `${CDK_NAG_RULES_README}#awssolutions-sqs3`,
   },
+
+  // HIPAA Security pack — regulated-workload rules with static remediations.
+  'HIPAA.Security-S3BucketVersioningEnabled': {
+    name: 'S3 Bucket Versioning Enabled',
+    description: 'The S3 Bucket does not have versioning enabled.',
+    severity: 'error',
+    fix: `new s3.Bucket(this, 'Bucket', {
+  versioned: true,
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#hipaa.security-s3bucketversioningenabled`,
+  },
+  'HIPAA.Security-S3BucketSSLRequestsOnly': {
+    name: 'S3 Bucket SSL Requests Only',
+    description: 'The S3 Bucket or bucket policy does not require requests to use SSL.',
+    severity: 'error',
+    fix: `new s3.Bucket(this, 'Bucket', {
+  enforceSSL: true,
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#hipaa.security-s3bucketsslrequestsonly`,
+  },
+  'HIPAA.Security-CloudTrailCloudWatchLogsEnabled': {
+    name: 'CloudTrail CloudWatch Logs Enabled',
+    description: 'The trail does not have CloudWatch logs enabled.',
+    severity: 'error',
+    fix: `new cloudtrail.Trail(this, 'Trail', {
+  sendToCloudWatchLogs: true,
+  cloudWatchLogGroup: logGroup,
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#hipaa.security-cloudtrailcloudwatchlogsenabled`,
+  },
+  'HIPAA.Security-CloudTrailLogFileValidationEnabled': {
+    name: 'CloudTrail Log File Validation Enabled',
+    description: 'The trail does not have log file validation enabled.',
+    severity: 'error',
+    fix: `new cloudtrail.Trail(this, 'Trail', {
+  enableFileValidation: true,
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#hipaa.security-cloudtraillogfilevalidationenabled`,
+  },
+  'HIPAA.Security-RDSStorageEncrypted': {
+    name: 'RDS Storage Encrypted',
+    description: 'The RDS DB instance or Aurora DB cluster does not have storage encrypted.',
+    severity: 'error',
+    fix: `new rds.DatabaseInstance(this, 'Db', {
+  storageEncrypted: true,
+  // ...
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#hipaa.security-rdsstorageencrypted`,
+  },
+  'HIPAA.Security-IAMPolicyNoStatementsWithAdminAccess': {
+    name: 'IAM Policy No Statements With Admin Access',
+    description: 'The IAM policy grants admin access, allowing a principal to perform all actions on all resources.',
+    severity: 'error',
+    fix: `// Scope the policy instead of granting '*' on '*':
+new iam.PolicyStatement({
+  actions: ['s3:GetObject'],
+  resources: [bucket.arnForObjects('*')],
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#hipaa.security-iampolicynostatementswithadminaccess`,
+  },
+
+  // NIST 800-53 rev 5 pack — mirrors the HIPAA Security entries above where
+  // the underlying cdk-nag check (and remediation) is the same.
+  'NIST.800.53.R5-S3BucketVersioningEnabled': {
+    name: 'S3 Bucket Versioning Enabled',
+    description: 'The S3 Bucket does not have versioning enabled.',
+    severity: 'error',
+    fix: `new s3.Bucket(this, 'Bucket', {
+  versioned: true,
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#nist.800.53.r5-s3bucketversioningenabled`,
+  },
+  'NIST.800.53.R5-S3BucketSSLRequestsOnly': {
+    name: 'S3 Bucket SSL Requests Only',
+    description: 'The S3 Bucket or bucket policy does not require requests to use SSL.',
+    severity: 'error',
+    fix: `new s3.Bucket(this, 'Bucket', {
+  enforceSSL: true,
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#nist.800.53.r5-s3bucketsslrequestsonly`,
+  },
+  'NIST.800.53.R5-CloudTrailCloudWatchLogsEnabled': {
+    name: 'CloudTrail CloudWatch Logs Enabled',
+    description: 'The trail does not have CloudWatch logs enabled.',
+    severity: 'error',
+    fix: `new cloudtrail.Trail(this, 'Trail', {
+  sendToCloudWatchLogs: true,
+  cloudWatchLogGroup: logGroup,
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#nist.800.53.r5-cloudtrailcloudwatchlogsenabled`,
+  },
+  'NIST.800.53.R5-CloudTrailLogFileValidationEnabled': {
+    name: 'CloudTrail Log File Validation Enabled',
+    description: 'The trail does not have log file validation enabled.',
+    severity: 'error',
+    fix: `new cloudtrail.Trail(this, 'Trail', {
+  enableFileValidation: true,
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#nist.800.53.r5-cloudtraillogfilevalidationenabled`,
+  },
+  'NIST.800.53.R5-RDSStorageEncrypted': {
+    name: 'RDS Storage Encrypted',
+    description: 'The RDS DB instance or Aurora DB cluster does not have storage encrypted.',
+    severity: 'error',
+    fix: `new rds.DatabaseInstance(this, 'Db', {
+  storageEncrypted: true,
+  // ...
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#nist.800.53.r5-rdsstorageencrypted`,
+  },
+  'NIST.800.53.R5-IAMPolicyNoStatementsWithAdminAccess': {
+    name: 'IAM Policy No Statements With Admin Access',
+    description: 'The IAM policy grants admin access, allowing a principal to perform all actions on all resources.',
+    severity: 'error',
+    fix: `// Scope the policy instead of granting '*' on '*':
+new iam.PolicyStatement({
+  actions: ['s3:GetObject'],
+  resources: [bucket.arnForObjects('*')],
+});`,
+    docUrl: `${CDK_NAG_RULES_README}#nist.800.53.r5-iampolicynostatementswithadminaccess`,
+  },
 };
 
 /** Prefix-level fallback docs — applied when no exact match is found. */
@@ -209,10 +330,12 @@ const PREFIX_RULE_DOCS: Array<{ prefix: string; doc: RuleDoc }> = [
     },
   },
   {
-    prefix: 'NIST.800-53.',
+    // Actual rule IDs are `NIST.800.53.R5-*` (see cdk-nag's
+    // `Nist80053R5Checks.packName`) — not `NIST.800-53.*`.
+    prefix: 'NIST.800.53.R5-',
     doc: {
       name: 'NIST 800-53 Rule',
-      description: 'A NIST 800-53 pack finding from cdk-nag.',
+      description: 'A NIST 800-53 rev 5 pack finding from cdk-nag.',
       severity: 'error',
       docUrl: CDK_NAG_RULES_README,
     },
