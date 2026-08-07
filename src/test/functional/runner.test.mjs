@@ -186,6 +186,35 @@ describe('cdkNagRunner — built-in rule packs (regression for issue #4)', () =>
   });
 });
 
+describe('cdkNagRunner — HIPAASecurityChecks (pending #87)', () => {
+  // Remove this skip when #87 fixes the setting name to match the cdk-nag
+  // HIPAASecurityChecks export.
+  test(
+    'HIPAA.SecurityChecks emits at least one finding against an unencrypted S3 bucket',
+    { skip: 'blocked by #87 — setting name does not match cdk-nag export' },
+    () => {
+      const result = runRunner({
+        templatePath: templatePath('insecure-hipaa.yaml'),
+        rulePacks: ['HIPAA.SecurityChecks'],
+        customRules: [],
+        workspacePath: REPO_ROOT,
+      });
+
+      assert.equal(
+        result.exitCode,
+        0,
+        `runner exited ${result.exitCode}; stderr: ${result.stderr}`
+      );
+      assert.ok(Array.isArray(result.findings), `findings must be an array, got: ${result.stdout}`);
+      assert.ok(
+        result.findings.length > 0,
+        'HIPAA.SecurityChecks produced zero findings against an unencrypted S3 bucket — ' +
+          'remove this skip after #87 maps the setting name to the cdk-nag HIPAASecurityChecks export.'
+      );
+    }
+  );
+});
+
 describe('cdkNagRunner — custom rules', () => {
   test('matching custom rule emits a finding', () => {
     const { findings, exitCode } = runRunner({
