@@ -14,6 +14,17 @@ A PR does **not** merge until **all** of the following are true:
 
 The single required status check is `All checks passed`. It aggregates every sub-job so one required check covers the whole pipeline.
 
+## New here? Start with a good first issue
+
+Never contributed to this project before? Welcome.
+
+- Browse [`good first issue`](https://github.com/alphacrack/cdk-nag-extension/issues?q=is%3Aopen+label%3A%22good+first+issue%22) — small, well-scoped tasks with step-by-step instructions in the issue body.
+- Brand-new to open source? Look for [`first-timers-only`](https://github.com/alphacrack/cdk-nag-extension/issues?q=is%3Aopen+label%3A%22first-timers-only%22) — reserved for someone's very first PR, with extra hand-holding.
+- Comment on the issue to claim it before you start, so two people don't do the same work.
+- Questions? Ask in the issue or in [Discussions](https://github.com/alphacrack/cdk-nag-extension/discussions).
+
+The rest of this document is the full merge gate — skim it, but don't let it scare you off.
+
 ## Running the gate locally
 
 ```bash
