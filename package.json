@@ -112,7 +112,7 @@
         },
         "cdkNagValidator.showInlineSuggestions": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Show inline suggestions for fixing issues"
         },
         "cdk-nag-validator.useProjectCdkNag": {
