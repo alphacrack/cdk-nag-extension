@@ -63,10 +63,10 @@ describe('CDK NAG Validator — configuration defaults', () => {
     expect(autoValidate).toBe(true);
   });
 
-  it('showInlineSuggestions defaults to true', () => {
+  it('showInlineSuggestions defaults to false', () => {
     const config = vscode.workspace.getConfiguration('cdkNagValidator');
-    const show = config.get('showInlineSuggestions', true);
-    expect(show).toBe(true);
+    const show = config.get('showInlineSuggestions', false);
+    expect(show).toBe(false);
   });
 
   it('enabledRulePacks defaults to AwsSolutionsChecks', () => {
