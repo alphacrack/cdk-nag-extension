@@ -173,7 +173,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "aws-cdk-lib": "^2.261.0",
+    "aws-cdk-lib": "^2.262.1",
     "cdk-nag": "^3.0.1",
     "yaml": "^2.3.4"
   },
