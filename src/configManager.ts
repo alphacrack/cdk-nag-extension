@@ -55,9 +55,8 @@ export class ConfigManager {
     const configDir = path.dirname(configPath);
 
     try {
-      if (!fs.existsSync(configDir)) {
-        await fs.promises.mkdir(configDir, { recursive: true });
-      }
+      // mkdir with recursive: true is idempotent, so no existence check is needed.
+      await fs.promises.mkdir(configDir, { recursive: true });
       await fs.promises.writeFile(configPath, JSON.stringify(config, null, 2));
     } catch (error) {
       console.error('Error saving config file:', error);
