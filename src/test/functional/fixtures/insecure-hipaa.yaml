@@ -1,0 +1,4 @@
+Resources:
+  UnencryptedPatientRecordsBucket:
+    Type: AWS::S3::Bucket
+    Properties: {}
