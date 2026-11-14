@@ -102,8 +102,8 @@
         },
         "cdkNagValidator.autoValidate": {
           "type": "boolean",
-          "default": true,
-          "description": "Automatically validate files on save"
+          "default": false,
+          "description": "Automatically validate files on save (not yet implemented — see #71)"
         },
         "cdkNagValidator.autoInstall": {
           "type": "boolean",

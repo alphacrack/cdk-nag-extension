@@ -7,6 +7,8 @@
  * `npm run test:integration`.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 
 describe('CDK NAG Validator — VS Code API wiring', () => {
@@ -57,10 +59,13 @@ describe('CDK NAG Validator — configuration defaults', () => {
     expect(autoInstall).toBe(false);
   });
 
-  it('autoValidate defaults to true', () => {
-    const config = vscode.workspace.getConfiguration('cdkNagValidator');
-    const autoValidate = config.get('autoValidate', true);
-    expect(autoValidate).toBe(true);
+  it('autoValidate manifest default is false and its description names #71', () => {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')
+    );
+    const setting = manifest.contributes.configuration.properties['cdkNagValidator.autoValidate'];
+    expect(setting.default).toBe(false);
+    expect(setting.description).toContain('#71');
   });
 
   it('showInlineSuggestions defaults to true', () => {

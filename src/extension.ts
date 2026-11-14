@@ -58,7 +58,7 @@ function shouldShowInlineSuggestions(): boolean {
 // Get auto-validate setting
 function shouldAutoValidate(): boolean {
   const config = vscode.workspace.getConfiguration('cdkNagValidator');
-  return config.get<boolean>('autoValidate', true);
+  return config.get<boolean>('autoValidate', false);
 }
 
 // Get auto-install setting (opt-in, defaults to false for safety)
