@@ -178,7 +178,7 @@
     "yaml": "^2.3.4"
   },
   "overrides": {
-    "brace-expansion": "^2.1.0",
+    "brace-expansion": "^2.1.7",
     "mocha": {
       "diff": "^8.0.3",
       "serialize-javascript": "^7.0.5"
