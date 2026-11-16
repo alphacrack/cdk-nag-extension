@@ -175,7 +175,7 @@
   "dependencies": {
     "aws-cdk-lib": "^2.262.1",
     "cdk-nag": "^3.0.2",
-    "yaml": "^2.3.4"
+    "yaml": "^2.9.1"
   },
   "overrides": {
     "brace-expansion": "^2.1.7",
